@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: dlp-market-analyzer
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 -m streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11"
