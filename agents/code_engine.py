@@ -774,30 +774,30 @@ def score_institutional(holders, info):
     short_pct = (info.get("short_percent", 0) or 0) * 100
 
     # Insider signal (0-33)
-    insider = 16.0 + _lin(insider_buys, 0, 5, 0, 14)
-    insider = _clamp(insider, 8, 33)
+    insider = 18.0 + _lin(insider_buys, 0, 5, 0, 14)
+    insider = _clamp(insider, 10, 33)
 
     # Institutional quality (0-33): ownership saludable 40-85%
     if inst_pct is None:
-        instq = 17.0
+        instq = 19.0
     elif inst_pct < 40:
-        instq = _lin(inst_pct, 0, 40, 10, 24)
+        instq = _lin(inst_pct, 0, 40, 13, 27)
     elif inst_pct <= 85:
-        instq = _lin(inst_pct, 40, 85, 24, 30)
+        instq = _lin(inst_pct, 40, 85, 27, 32)
     else:
-        instq = _lin(inst_pct, 85, 100, 26, 18)  # crowded
-    instq = _clamp(instq, 8, 33)
+        instq = _lin(inst_pct, 85, 100, 29, 21)  # crowded
+    instq = _clamp(instq, 10, 33)
 
     # Short interest dynamic (0-34): bajo = sin apuestas en contra
     if short_pct <= 0:
-        shortd = 20.0
+        shortd = 22.0
     elif short_pct < 5:
-        shortd = _lin(short_pct, 0, 5, 26, 22)
+        shortd = _lin(short_pct, 0, 5, 29, 25)
     elif short_pct < 15:
-        shortd = _lin(short_pct, 5, 15, 22, 14)
+        shortd = _lin(short_pct, 5, 15, 25, 16)
     else:
-        shortd = _lin(short_pct, 15, 30, 14, 6)
-    shortd = _clamp(shortd, 4, 34)
+        shortd = _lin(short_pct, 15, 30, 16, 7)
+    shortd = _clamp(shortd, 6, 34)
 
     score = round(insider + instq + shortd, 1)
     insider_sig = "alcista" if insider_buys >= 2 else "neutral"
@@ -989,12 +989,12 @@ def _score_macro(macro, info):
     sp_1m = (macro.get("sp500") or {}).get("1m_change")
     sector_perf = macro.get("sector_performance", {}) or {}
 
-    env = 17.0  # macro_environment (0-34)
+    env = 19.5  # macro_environment (0-34) — baseline ligeramente más optimista
     if vix is not None:
         env += _lin(vix, 12, 35, 12, -8)
     if sp_1m is not None:
         env += _lin(sp_1m, -6, 6, -4, 4)
-    env = _clamp(env, 4, 34)
+    env = _clamp(env, 6, 34)
 
     # sector_rotation (0-33): ¿el sector de la empresa va bien?
     sec_ret = None
@@ -1002,16 +1002,16 @@ def _score_macro(macro, info):
         if name and name.lower()[:4] in sector:
             sec_ret = ret
             break
-    rot = _lin(sec_ret, -15, 25, 8, 30, default=16)
-    rot = _clamp(rot, 4, 33)
+    rot = _lin(sec_ret, -15, 25, 12, 32, default=18.5)
+    rot = _clamp(rot, 6, 33)
 
     # liquidity_conditions (0-33): curva + VIX
-    liq = 17.0
+    liq = 19.5
     if yc is not None:
         liq += _lin(yc, -1.0, 1.5, -6, 8)  # invertida = peor
     if vix is not None:
         liq += _lin(vix, 12, 35, 6, -6)
-    liq = _clamp(liq, 4, 33)
+    liq = _clamp(liq, 6, 33)
 
     score = round(env + rot + liq, 1)
     vix_level = ("bajo <20" if (vix or 20) < 20 else "elevado 20-30" if (vix or 20) <= 30 else "alto >30")
@@ -1076,20 +1076,20 @@ def _score_sentiment(news, info):
         pos += sum(1 for w in _POS_WORDS if w in t)
         neg += sum(1 for w in _NEG_WORDS if w in t)
 
-    # news_sentiment (0-34) — base neutral, nudge por keywords
-    base = 17.0
+    # news_sentiment (0-34) — base ligeramente más optimista, nudge por keywords
+    base = 18.0
     if pos + neg > 0:
         base += _lin((pos - neg) / (pos + neg), -1, 1, -10, 10)
-    news_s = _clamp(base, 5, 34)
+    news_s = _clamp(base, 7, 34)
 
     # narrative_momentum (0-33): cobertura reciente
-    narr = _clamp(12 + _lin(fresh, 0, 8, 0, 14), 6, 33)
+    narr = _clamp(13.5 + _lin(fresh, 0, 8, 0, 14), 8, 33)
 
     # contrarian_value (0-33): neutral salvo extremos
-    contr = 16.0
+    contr = 17.0
     if neg > pos and neg >= 3:
         contr += 6  # narrativa negativa = posible valor contrario
-    contr = _clamp(contr, 6, 33)
+    contr = _clamp(contr, 8, 33)
 
     score = round(news_s + narr + contr, 1)
     if pos > neg:
@@ -1155,28 +1155,28 @@ def _score_catalysts(earnings, info):
     total = len(hist)
 
     # earnings_momentum (0-34)
-    em = 16.0
+    em = 18.0
     if avg_surp is not None:
         em += _lin(avg_surp, -10, 15, -8, 10)
-    em = _clamp(em, 4, 34)
+    em = _clamp(em, 6, 34)
 
     # catalyst_quality (0-33): proximidad del próximo earnings
     if days is None:
-        cq = 14.0
+        cq = 17.0
     elif days <= 30:
-        cq = _lin(days, 0, 30, 30, 22)
+        cq = _lin(days, 0, 30, 32, 24)
     elif days <= 90:
-        cq = _lin(days, 30, 90, 22, 14)
+        cq = _lin(days, 30, 90, 24, 17)
     else:
-        cq = _lin(days, 90, 200, 14, 8)
-    cq = _clamp(cq, 6, 33)
+        cq = _lin(days, 90, 200, 17, 11)
+    cq = _clamp(cq, 9, 33)
 
     # analyst_revision_trend (0-33): proxy por beat rate
     if total > 0 and beat is not None:
-        art = _lin(beat / total, 0, 1, 10, 30)
+        art = _lin(beat / total, 0, 1, 14, 32)
     else:
-        art = 16.0
-    art = _clamp(art, 6, 33)
+        art = 18.0
+    art = _clamp(art, 9, 33)
 
     score = round(em + cq + art, 1)
     timeline = ("30d" if (days or 999) <= 30 else "90d" if (days or 999) <= 90 else
