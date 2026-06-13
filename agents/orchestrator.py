@@ -180,6 +180,8 @@ class Orchestrator:
         final = self._synthesize(ticker, reports)
         return final
 
+    _AGENT_TIMEOUT = 40  # segundos máximos por agente
+
     def _run_agents_parallel(self, ticker: str, callback=None) -> dict[str, AgentReport]:
         reports = {}
 
@@ -189,7 +191,7 @@ class Orchestrator:
             try:
                 report = agent.analyze(ticker)
                 if callback:
-                    if isinstance(report, dict):          # ← agente combinado (market_context)
+                    if isinstance(report, dict):
                         callback(agent.name, "Completado")
                     else:
                         callback(agent.name, f"Completado — Score: {report.score:.0f}/100")
@@ -204,17 +206,28 @@ class Orchestrator:
                     pros=[], cons=[], error=str(e)
                 )
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {
                 executor.submit(run_agent, name, agent): name
                 for name, agent in self.agents.items()
             }
-            for future in as_completed(futures):
-                name, report = future.result()
-                if isinstance(report, dict):       # market_context → {"macro":,"sentiment":,"catalysts":}
+            for future in as_completed(futures, timeout=self._AGENT_TIMEOUT * 2):
+                try:
+                    name, report = future.result(timeout=self._AGENT_TIMEOUT)
+                except Exception as e:
+                    name = futures.get(future, "unknown")
+                    if callback:
+                        callback(str(name), f"Timeout — usando datos parciales")
+                    from agents.base import AgentReport
+                    report = AgentReport(
+                        agent_name=str(name), score=50,
+                        analysis="Tiempo de respuesta excedido.",
+                        pros=[], cons=[], error="timeout"
+                    )
+                if isinstance(report, dict):
                     reports.update(report)
                 else:
-                    reports[name] = report
+                    reports[report.agent_name if hasattr(report, "agent_name") else name] = report
 
         return reports
 

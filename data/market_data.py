@@ -134,7 +134,13 @@ def get_company_info(ticker: str) -> dict:
 
     stock = yf.Ticker(ticker)
     try:
-        info = stock.info or {}
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FT
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(lambda: stock.info or {})
+            try:
+                info = fut.result(timeout=20)
+            except FT:
+                info = {}
     except Exception:
         info = {}
 
@@ -1019,9 +1025,8 @@ def get_earnings_data(ticker: str) -> dict:
 
 def get_peer_metrics(peers: list[str], ttl_hours: float = 6) -> dict[str, dict]:
     """
-    Fetcha métricas clave de una lista de tickers competidores.
-    Usa caché para no ralentizar el análisis principal.
-    Devuelve dict {ticker: {gross_margin, operating_margin, revenue_growth, market_cap, pe_ratio}}
+    Fetcha métricas de competidores en paralelo con timeout duro de 12s total.
+    Si hay caché válida la usa sin tocar la red.
     """
     if not peers:
         return {}
@@ -1031,34 +1036,45 @@ def get_peer_metrics(peers: list[str], ttl_hours: float = 6) -> dict[str, dict]:
     if cached:
         return cached
 
-    result = {}
-    for t in peers[:4]:  # Máximo 4 para no ralentizar demasiado
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
+
+    def _fetch_one(t: str) -> tuple:
         try:
             stock = yf.Ticker(t)
-            info = stock.info or {}
-            rev = info.get("totalRevenue") or 0
-            gp = info.get("grossProfits") or 0
-            oi_margin = info.get("operatingMargins")
-            gm = (gp / rev * 100) if rev and gp else None
-            if gm is None:
-                gm_raw = info.get("grossMargins")
-                gm = gm_raw * 100 if gm_raw is not None else None
-            if oi_margin is not None:
-                oi_margin = oi_margin * 100
-
-            rg = info.get("revenueGrowth")
-            rg_pct = rg * 100 if rg is not None else None
-
-            result[t] = {
-                "name": info.get("shortName") or t,
-                "gross_margin": round(gm, 1) if gm is not None else None,
-                "operating_margin": round(oi_margin, 1) if oi_margin is not None else None,
-                "revenue_growth": round(rg_pct, 1) if rg_pct is not None else None,
-                "market_cap": info.get("marketCap"),
-                "pe_ratio": info.get("trailingPE") or info.get("forwardPE"),
+            info = stock.fast_info  # fast_info es mucho más rápido que .info
+            # fast_info no tiene márgenes, usamos .info solo si fast_info responde
+            full = {}
+            try:
+                full = yf.Ticker(t).info or {}
+            except Exception:
+                pass
+            gm_raw = full.get("grossMargins")
+            om_raw = full.get("operatingMargins")
+            rg_raw = full.get("revenueGrowth")
+            return t, {
+                "name": full.get("shortName") or t,
+                "gross_margin": round(gm_raw * 100, 1) if gm_raw is not None else None,
+                "operating_margin": round(om_raw * 100, 1) if om_raw is not None else None,
+                "revenue_growth": round(rg_raw * 100, 1) if rg_raw is not None else None,
+                "market_cap": getattr(info, "market_cap", None),
+                "pe_ratio": full.get("trailingPE") or full.get("forwardPE"),
             }
         except Exception:
-            result[t] = {}
+            return t, {}
 
-    _save_cache(cache_key, result)
+    result = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_fetch_one, t): t for t in peers[:3]}
+        try:
+            for future in as_completed(futures, timeout=12):
+                try:
+                    t, data = future.result(timeout=5)
+                    result[t] = data
+                except Exception:
+                    pass
+        except FuturesTimeout:
+            pass  # Si tarda más de 12s en total, devolvemos lo que haya
+
+    if result:
+        _save_cache(cache_key, result)
     return result
