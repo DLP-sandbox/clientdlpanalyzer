@@ -1633,12 +1633,11 @@ def render_fundamentals(analysis: StockAnalysis):
     # ── Pros / Cons ──
     _render_pros_cons(report)
 
+    # ── EL HALLAZGO: la conclusión más importante en lenguaje simple ──
+    _render_insight_card("El Hallazgo", rd.get("key_insight", ""),
+                         color="#FFB84D", icon="🔎")
+
     # ── Insights: DCF Thesis + Earnings Quality ──
-    if isinstance(rd.get("dcf_thesis"), str) or report.analysis:
-        # raw_data normalmente no tiene dcf_thesis (eso lo guarda el report al nivel superior)
-        pass
-    # El agente fundamentals retorna estos campos en el JSON; los buscamos en report.raw_data
-    # o si no, en key_metrics extras
     _render_insight_card("Tesis DCF", rd.get("dcf_thesis", ""),
                          color="#00FF88", icon="💎")
     _render_insight_card("Calidad de Earnings", rd.get("earnings_quality", ""),

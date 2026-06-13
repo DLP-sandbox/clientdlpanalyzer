@@ -98,11 +98,17 @@ class FundamentalsAgent(BaseAgent):
                 key_metrics=result.get("key_metrics", {}),
                 conviction=result.get("conviction", "MEDIUM"),
                 sub_scores={**sub_scores, **snowflake},
-                raw_data={"ratios": ratios, "info_snippet": {
-                    "pe": info.get("pe_ratio"),
-                    "market_cap": info.get("market_cap"),
-                    "sector": info.get("sector"),
-                }},
+                raw_data={
+                    "ratios": ratios,
+                    "key_insight": result.get("key_insight", ""),
+                    "dcf_thesis": result.get("dcf_thesis", ""),
+                    "earnings_quality": result.get("earnings_quality", ""),
+                    "info_snippet": {
+                        "pe": info.get("pe_ratio"),
+                        "market_cap": info.get("market_cap"),
+                        "sector": info.get("sector"),
+                    },
+                },
             )
         except Exception as e:
             return self._safe_report(ticker, str(e))

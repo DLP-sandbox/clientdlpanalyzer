@@ -176,12 +176,75 @@ def score_fundamentals(info, financials, ratios):
         else:
             cons.append(f"Sin debilidades severas identificadas — vigilar evolución de márgenes ({_pct(om)}) y deuda ({_num(de,0)} D/E)")
 
-    analysis = (
-        f"Márgenes operativos de {_pct(om)} y ROIC de {_pct(roic)} marcan la calidad del negocio; "
-        f"los ingresos crecen {_pct(rg)} interanual. En valoración, el P/E es {_num(pe,1)} y el FCF yield "
-        f"{_pct(fcfy)}. La deuda (Debt/Equity {_num(de,0)}) y el current ratio "
-        f"{_num(cr,2)} reflejan su salud financiera."
-    )
+    # ── Análisis en lenguaje simple (explica cada término) ────────────────
+    partes = []
+    if om is not None:
+        if om >= 25:
+            partes.append(f"Es un negocio muy rentable: de cada $100 que vende le quedan unos "
+                          f"${_num(om,0)} de ganancia operativa (margen operativo del {_pct(om)}, "
+                          f"lo que gana después de pagar sus costos del día a día).")
+        elif om >= 10:
+            partes.append(f"Tiene una rentabilidad decente: de cada $100 de ventas le quedan unos "
+                          f"${_num(om,0)} de ganancia operativa (margen operativo del {_pct(om)}).")
+        else:
+            partes.append(f"Trabaja con márgenes ajustados: de cada $100 de ventas solo le quedan "
+                          f"${_num(om,0)} de ganancia operativa (margen operativo del {_pct(om)}), "
+                          f"poca holgura ante imprevistos.")
+    if roic is not None:
+        cal = ("excelente" if roic >= 18 else "aceptable" if roic >= 10 else "flojo")
+        partes.append(f"Reinvierte su dinero con un retorno {cal} del {_pct(roic)} (el ROIC mide qué "
+                      f"tan bien convierte el capital que invierte en ganancias; por encima de 15% "
+                      f"es señal de un gran negocio).")
+    if rg is not None:
+        if rg >= 0:
+            partes.append(f"Sus ventas crecen un {_pct(rg)} al año.")
+        else:
+            partes.append(f"Sus ventas se están encogiendo un {_pct(abs(rg))} al año, una señal de alerta.")
+    if pe and pe > 0:
+        cal_pe = ("barata" if pe < 15 else "a un precio razonable" if pe < 25 else "exigente")
+        partes.append(f"En precio, la acción cotiza {cal_pe} a un P/E de {_num(pe,1)} "
+                      f"(cuántos años de ganancias actuales estás pagando por ella).")
+    if score >= 66:
+        partes.append("En resumen, los números de fondo del negocio son sólidos.")
+    elif score >= 50:
+        partes.append("En resumen, el negocio tiene luces y sombras en sus números.")
+    else:
+        partes.append("En resumen, los números de fondo todavía dejan dudas.")
+    analysis = " ".join(partes)
+
+    # ── EL HALLAZGO: la conclusión más importante, conectando los puntos ───
+    fortaleza = None
+    if roic is not None and om is not None and roic >= 18 and om >= 25:
+        fortaleza = (f"estás ante una 'máquina de calidad' — gana mucho por cada venta "
+                     f"(margen {_pct(om)}) y reinvierte ese dinero a tasas altas ({_pct(roic)} de ROIC), "
+                     f"que es justo la receta de las empresas que multiplican su valor con los años")
+    elif rg is not None and rg >= 20:
+        fortaleza = (f"lo que más destaca es su motor de crecimiento: las ventas suben {_pct(rg)} al año, "
+                     f"muy por encima de lo que crece la economía")
+    elif fcfy is not None and fcfy >= 5:
+        fortaleza = (f"lo más valioso es que genera mucha caja libre ({_pct(fcfy)} de FCF yield, el "
+                     f"dinero real que sobra cada año), con la que puede pagar dividendos o crecer sin endeudarse")
+    elif om is not None and om >= 18:
+        fortaleza = f"su punto fuerte es la rentabilidad: márgenes operativos del {_pct(om)}, por encima del promedio"
+    else:
+        fortaleza = "no tiene una ventaja financiera que sobresalga con claridad sobre el resto del sector"
+
+    pero = None
+    if rg is not None and rg < 0:
+        pero = "sus ventas están cayendo, lo más importante a vigilar"
+    elif pe and pe > 35:
+        pero = (f"a un P/E de {_num(pe,1)} el mercado ya paga caro por esa calidad, "
+                f"así que cualquier tropiezo puede pesar en el precio")
+    elif de is not None and de > 150:
+        pero = f"carga una deuda elevada (Debt/Equity {_num(de,0)}) que conviene seguir de cerca"
+    elif om is not None and om < 10:
+        pero = "sus márgenes ajustados le dejan poco colchón si la competencia aprieta"
+    elif pe and pe > 25:
+        pero = f"a un P/E de {_num(pe,1)} no está barata: hay que pagar por su calidad"
+    else:
+        pero = "no se ve una debilidad financiera grave a día de hoy"
+
+    key_insight = f"Lo más relevante: {fortaleza}. El punto a vigilar: {pero}."
 
     return {
         "score": score,
@@ -200,6 +263,7 @@ def score_fundamentals(info, financials, ratios):
             "ev_ebitda": _num(ev, 1),
         },
         "sub_scores": sub_scores,
+        "key_insight": key_insight,
         "dcf_thesis": (
             "Calidad y generación de caja razonables; el precio actual define el margen de seguridad."
             if score >= 60 else
@@ -286,12 +350,59 @@ def score_technical(ind, ind_weekly, rs):
     if not cons:
         cons.append("Sin señales bajistas relevantes en el gráfico")
 
-    analysis = (
-        f"La acción está en Stage {stage} "
-        f"({'alcista' if stage==2 else 'acumulación' if stage==1 else 'distribución' if stage==3 else 'bajista' if stage==4 else 'indefinido'}). "
-        f"Cotiza {_pct(vs50, signed=True)} vs su media de 50 días y {_pct(vs200, signed=True)} vs la de 200. "
-        f"El RSI está en {_num(rsi,0)} y en 6 meses {'supera' if (rs6 or 0)>0 else 'va por detrás de'} al S&P 500 ({_pct(rs6, signed=True)})."
-    )
+    # ── Análisis en lenguaje simple (sin jerga sin explicar) ──────────────
+    tendencia_txt = {
+        2: "viene en una tendencia claramente al alza: el precio sube de forma sostenida y ordenada",
+        1: "está empezando a recuperarse, saliendo de una zona de calma y apuntando hacia arriba",
+        3: "está perdiendo fuerza: la subida se frenó y el precio empieza a flaquear",
+        4: "viene en una tendencia a la baja: lleva semanas cayendo",
+        0: "no muestra una tendencia clara por ahora, se mueve de lado",
+    }.get(stage, "no muestra una tendencia clara por ahora")
+
+    partes = [f"En lo técnico (cómo se está comportando el precio en el gráfico), la acción {tendencia_txt}."]
+
+    if vs200 is not None:
+        if vs200 >= 0:
+            partes.append(
+                f"Hoy está un {_pct(vs200)} por encima de su precio promedio del último año, "
+                f"lo que confirma que manda la fuerza compradora."
+            )
+        else:
+            partes.append(
+                f"Hoy está un {_pct(abs(vs200))} por debajo de su precio promedio del último año, "
+                f"una señal de debilidad."
+            )
+
+    if rsi is not None:
+        if rsi > 75:
+            rsi_txt = (f"viene muy acelerada (RSI en {_num(rsi,0)}; el RSI mide de 0 a 100 qué tan "
+                       f"rápido ha subido, y por encima de 75 suele estar 'recalentada'), así que "
+                       f"podría tomarse una pausa")
+        elif rsi < 35:
+            rsi_txt = (f"viene muy castigada (RSI en {_num(rsi,0)}; el RSI mide de 0 a 100 qué tan "
+                       f"rápido se ha movido, y por debajo de 35 suele estar 'sobrevendida'), de donde "
+                       f"a veces vienen rebotes")
+        else:
+            rsi_txt = (f"se mueve a un ritmo equilibrado (RSI en {_num(rsi,0)}, una zona sana, ni "
+                       f"recalentada ni demasiado castigada)")
+        partes.append(f"Su pulso de corto plazo {rsi_txt}.")
+
+    if rs6 is not None:
+        if rs6 >= 0:
+            partes.append(f"Y en los últimos 6 meses le gana al mercado (al S&P 500, el índice de las "
+                          f"500 empresas más grandes de EE.UU.) por {_pct(rs6)}.")
+        else:
+            partes.append(f"Y en los últimos 6 meses va por detrás del mercado (del S&P 500, el índice "
+                          f"de las 500 empresas más grandes de EE.UU.) por {_pct(abs(rs6))}.")
+
+    if score >= 66:
+        partes.append("En conjunto, el momento del gráfico acompaña.")
+    elif score >= 50:
+        partes.append("En conjunto, el cuadro técnico es mixto: ni claramente a favor ni en contra.")
+    else:
+        partes.append("En conjunto, el momento del gráfico todavía no acompaña; conviene tener paciencia.")
+
+    analysis = " ".join(partes)
 
     return {
         "score": score,
