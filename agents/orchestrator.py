@@ -169,16 +169,22 @@ class Orchestrator:
         progress_callback(agent_name, status) para actualizar UI.
         """
         ticker = ticker.upper().strip()
+        reports = {}
 
-        # 1. Ejecutar sub-agentes en paralelo
-        reports = self._run_agents_parallel(ticker, progress_callback)
+        # GARANTÍA ANTI-CRASH: analyze() NUNCA propaga una excepción. Pase lo
+        # que pase (red caída, dato faltante, agente roto, timeout global),
+        # devuelve un StockAnalysis válido para que el dashboard jamás crashee.
+        try:
+            # 1. Ejecutar sub-agentes en paralelo
+            reports = self._run_agents_parallel(ticker, progress_callback)
 
-        # 2. Orquestador sintetiza
-        if progress_callback:
-            progress_callback("Orquestador", "Sintetizando análisis...")
+            # 2. Orquestador sintetiza
+            if progress_callback:
+                progress_callback("Orquestador", "Sintetizando análisis...")
 
-        final = self._synthesize(ticker, reports)
-        return final
+            return self._synthesize(ticker, reports)
+        except Exception as e:
+            return self._emergency_analysis(ticker, reports, e)
 
     _AGENT_TIMEOUT = 40  # segundos máximos por agente
 
@@ -435,6 +441,79 @@ class Orchestrator:
             asymmetry_direction=asymmetry_direction,
             asymmetry_strength=asymmetry_strength,
             is_compound_machine=is_compound_machine,
+        )
+
+    # Claves que el dashboard espera SIEMPRE en reports
+    _EXPECTED_KEYS = ("fundamentals", "technical", "future",
+                      "institutional", "risk", "macro", "sentiment", "catalysts")
+
+    def _emergency_analysis(self, ticker: str, reports: dict, err=None) -> StockAnalysis:
+        """Red de seguridad final: construye un StockAnalysis VÁLIDO cuando algo
+        catastrófico falla en analyze()/_synthesize(). Nunca lanza excepción."""
+        from agents.base import AgentReport
+        reports = dict(reports or {})
+        for key in self._EXPECTED_KEYS:
+            reports.setdefault(key, AgentReport(
+                agent_name=key, score=50,
+                analysis="No pudimos completar esta sección en este intento. "
+                         "Vuelve a lanzar el análisis en un momento.",
+                pros=[], cons=[], error="emergency"))
+
+        # Composite ponderado con lo que haya (o 50 por defecto)
+        try:
+            weighted = sum(reports[k].score * w for k, w in WEIGHTS.items()
+                           if reports.get(k)) or 50.0
+        except Exception:
+            weighted = 50.0
+        score_breakdown = {k: (reports[k].score if reports.get(k) else 50)
+                           for k in WEIGHTS}
+
+        # Nombre y sector sin que un fallo de red vuelva a romper nada
+        company_name, sector = ticker, "Unknown"
+        try:
+            from data.market_data import get_company_info
+            info = get_company_info(ticker) or {}
+            company_name = info.get("name", ticker)
+            sector = info.get("sector", "Unknown")
+        except Exception:
+            pass
+
+        try:
+            snowflake = self._default_snowflake(reports)
+        except Exception:
+            snowflake = {"value": 10, "quality": 10, "growth": 10,
+                         "momentum": 10, "future": 10}
+
+        return StockAnalysis(
+            ticker=ticker,
+            company_name=company_name,
+            composite_score=float(weighted),
+            recommendation=self._score_to_recommendation(weighted),
+            conviction_level="LOW",
+            investment_thesis=(
+                "No pudimos armar la lectura completa en este intento porque "
+                "alguna fuente de datos tardó en responder. Los puntajes por "
+                "categoría que sí se calcularon están más abajo. Te recomendamos "
+                "volver a lanzar el análisis en un momento."
+            ),
+            key_strengths=[r.pros[0] for r in reports.values() if r.pros][:3],
+            key_risks=[r.cons[0] for r in reports.values() if r.cons][:3],
+            entry_strategy="Revisa la sección de Riesgo para los niveles calculados.",
+            exit_strategy="El nivel de protección y el objetivo están en la sección de Riesgo.",
+            time_horizon="Volver a evaluar en un momento",
+            snowflake=snowflake,
+            score_breakdown=score_breakdown,
+            vetos_applied=[],
+            alpha_opportunity="No identificada",
+            reports=reports,
+            entry_price=None, stop_loss=None, target_price=None,
+            risk_reward=None, position_size_pct=None,
+            sector=sector,
+            long_term_quality_score=None,
+            quality_verdict="low",
+            asymmetry_direction="equilibrado",
+            asymmetry_strength="débil",
+            is_compound_machine=False,
         )
 
     def _build_synthesis_message(self, ticker, reports, weighted_score) -> str:
