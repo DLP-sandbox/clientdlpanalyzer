@@ -382,11 +382,15 @@ class Orchestrator:
         # ── VETOS Y AJUSTES EN PYTHON (no solo prompt) ──────────────────
         vetos_applied = list(result.get("vetos_applied", []) or [])
 
-        # Veto R/R: solo penaliza si NO hay calidad excepcional que lo compense
+        # Veto R/R: un R/R subóptimo es una señal de TIMING, no de calidad rota.
+        # Por eso solo impide que la acción llegue a ATRACTIVO (la limita al rango
+        # EN OBSERVACIÓN, tope 69), pero NUNCA la tira a EVITAR como antes hacía
+        # erróneamente (capeaba a 49). Solo aplica sin calidad excepcional que lo
+        # compense.
         computed = risk_data.get("computed_risk", {}) or {}
         rr = float(computed.get("rr_ratio", 0)) if computed.get("rr_ratio") else 0
         if rr > 0 and rr < 2.0 and fund_score < 70 and fut_score < 70:
-            cap = THRESHOLDS["EN OBSERVACIÓN"] - 1
+            cap = THRESHOLDS["ATRACTIVO"] - 1   # tope EN OBSERVACIÓN (69), no EVITAR
             if composite > cap:
                 composite = cap
                 vetos_applied.append(f"R/R {rr:.1f}:1 bajo sin calidad excepcional — limitado a EN OBSERVACIÓN")
