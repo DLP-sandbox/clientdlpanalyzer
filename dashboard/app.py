@@ -59,6 +59,27 @@ st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
 
 # ── State inicial ─────────────────────────────────────────────────────────
 
+# Máximo de análisis mantenidos EN MEMORIA (RAM) a la vez. Acota el uso de
+# memoria sin importar cuántos análisis se hayan acumulado en disco: los más
+# antiguos siguen guardados en disco, simplemente no se cargan a RAM.
+MAX_HISTORY_IN_MEMORY = 10
+
+
+def _prune_analyses_in_memory():
+    """Mantiene en session_state.analyses solo los MAX_HISTORY_IN_MEMORY más
+    recientes (por timestamp). NO borra nada del disco — solo libera RAM."""
+    analyses = st.session_state.get("analyses") or {}
+    if len(analyses) <= MAX_HISTORY_IN_MEMORY:
+        return
+    keep = sorted(analyses.values(),
+                  key=lambda a: getattr(a, "timestamp", "") or "",
+                  reverse=True)[:MAX_HISTORY_IN_MEMORY]
+    keep_tickers = {a.ticker for a in keep}
+    for t in list(analyses.keys()):
+        if t not in keep_tickers:
+            del st.session_state.analyses[t]
+
+
 def init_state():
     from config.settings import SCANNER_DEFAULTS
     # Bump esta versión cuando cambies SCANNER_DEFAULTS, así fuerza el reset
@@ -100,14 +121,17 @@ def init_state():
     for t in bad_tickers:
         del st.session_state.analyses[t]
 
-    # ── Cargar historial desde disco local ──
+    # ── Cargar historial desde disco local (solo los N más recientes para
+    #    acotar la memoria; los más antiguos quedan en disco, sin cargarse) ──
     if not st.session_state.get("_history_loaded"):
         try:
             from data.persistence import load_all_analyses as disk_load
             disk_saved = disk_load()
-            for ticker, analysis in disk_saved.items():
-                if ticker not in st.session_state.analyses and _is_valid_analysis(analysis):
-                    st.session_state.analyses[ticker] = analysis
+            valid = [a for a in disk_saved.values() if _is_valid_analysis(a)]
+            valid.sort(key=lambda a: getattr(a, "timestamp", "") or "", reverse=True)
+            for analysis in valid[:MAX_HISTORY_IN_MEMORY]:
+                if analysis.ticker not in st.session_state.analyses:
+                    st.session_state.analyses[analysis.ticker] = analysis
         except Exception:
             pass
         st.session_state._history_loaded = True
@@ -683,6 +707,9 @@ def run_analysis(ticker: str):
     st.session_state.selected_ticker = ticker
     st.session_state.quick_view_ticker = None
     st.session_state.analyzing = False
+    # Acotar la memoria: conservar solo los N análisis más recientes en RAM
+    # (el recién creado es el más nuevo, así que siempre se mantiene).
+    _prune_analyses_in_memory()
 
     # Guardar a disco en background — no bloqueamos el rerun por IO.
     # El usuario ve el análisis listo en vez de esperar a que termine
