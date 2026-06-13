@@ -492,18 +492,6 @@ def _sanitize_ticker_input(raw: str) -> tuple[str, Optional[str]]:
     return cleaned, None
 
 
-# ── PDF lead-magnet (generación local, sin créditos Anthropic) ──────────
-@st.cache_data(show_spinner=False)
-def _build_pdf_bytes_cached(ticker: str, timestamp: str, _analysis) -> bytes:
-    """Genera y cachea los bytes del PDF para un análisis.
-    Cache key = (ticker, timestamp). El _analysis (prefix underscore) no se
-    hashea — Streamlit lo trata como side input. Cero llamadas a Anthropic.
-    Primera generación: ~3-5s (kaleido renderiza 2 gráficos Plotly).
-    Reruns posteriores: instantáneo."""
-    from dashboard.pdf_report import build_analysis_pdf
-    return build_analysis_pdf(_analysis)
-
-
 def _ticker_exists_on_yahoo(ticker: str) -> bool:
     """Verifica que el ticker exista en Yahoo Finance.
 
@@ -3129,9 +3117,9 @@ def main():
     render_header()
 
     # El botón "Volver al Home" del top-nav. Cuando hay un ticker
-    # seleccionado, ese botón sale en la MISMA franja horizontal que el
-    # botón "Descargar PDF" (rendereado más abajo en el flujo de análisis);
-    # por eso aquí solo lo mostramos cuando NO hay análisis seleccionado.
+    # seleccionado, ese botón sale en su propia franja horizontal más abajo
+    # en el flujo de análisis; por eso aquí solo lo mostramos cuando NO hay
+    # análisis seleccionado.
     in_welcome = (
         not st.session_state.get("selected_ticker") and
         not st.session_state.get("quick_view_ticker") and
@@ -3166,16 +3154,8 @@ def main():
 
     analysis = st.session_state.analyses[selected]
 
-    # ── Franja superior: Home (izquierda/centro) + Descargar PDF (derecha) ──
-    # En una sola fila horizontal — ambos botones bien alineados.
-    # El PDF se cachea por (ticker, timestamp) así que no recomputa.
-    try:
-        _pdf_bytes = _build_pdf_bytes_cached(analysis.ticker, analysis.timestamp, analysis)
-    except Exception as _pdf_err:
-        _pdf_bytes = None
-        st.warning(f"No se pudo preparar el PDF descargable: {_pdf_err}")
-
-    _col_home, _col_mid, _col_pdf = st.columns([2, 3, 2])
+    # ── Franja superior: botón Volver al Home (izquierda) ──
+    _col_home, _col_rest = st.columns([2, 5])
     with _col_home:
         if st.button("⌂  Volver al Home", use_container_width=True,
                      key="topnav_home_btn"):
@@ -3186,16 +3166,6 @@ def main():
             st.session_state._show_scan_results = False
             st.session_state.scanner_config_open = False
             st.rerun()
-    with _col_pdf:
-        if _pdf_bytes:
-            st.download_button(
-                label="📄  Descargar análisis en PDF",
-                data=_pdf_bytes,
-                file_name=f"DLP_{analysis.ticker}_{analysis.timestamp[:10]}.pdf",
-                mime="application/pdf",
-                key=f"pdf_dl_{analysis.ticker}",
-                use_container_width=True,
-            )
 
     # Botón "← Volver al Scan" — visible cuando hay resultados de scan activos
     if st.session_state.scan_results:
