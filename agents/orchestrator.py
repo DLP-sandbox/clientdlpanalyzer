@@ -206,28 +206,53 @@ class Orchestrator:
                     pros=[], cons=[], error=str(e)
                 )
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
                 executor.submit(run_agent, name, agent): name
                 for name, agent in self.agents.items()
             }
-            for future in as_completed(futures, timeout=self._AGENT_TIMEOUT * 2):
-                try:
-                    name, report = future.result(timeout=self._AGENT_TIMEOUT)
-                except Exception as e:
-                    name = futures.get(future, "unknown")
-                    if callback:
-                        callback(str(name), f"Timeout — usando datos parciales")
-                    from agents.base import AgentReport
-                    report = AgentReport(
-                        agent_name=str(name), score=50,
+            try:
+                for future in as_completed(futures, timeout=self._AGENT_TIMEOUT * 3):
+                    key = futures.get(future, "unknown")
+                    try:
+                        name, report = future.result(timeout=self._AGENT_TIMEOUT)
+                    except Exception:
+                        name = key
+                        if callback:
+                            callback(str(name), "Timeout — usando datos parciales")
+                        from agents.base import AgentReport
+                        report = AgentReport(
+                            agent_name=str(name), score=50,
+                            analysis="Tiempo de respuesta excedido.",
+                            pros=[], cons=[], error="timeout"
+                        )
+                    # CLAVE: indexar SIEMPRE por la clave del agente ("technical",
+                    # "fundamentals", "future"...), NO por report.agent_name (que es
+                    # el nombre en español y rompería reports.get("technical")).
+                    if isinstance(report, dict):
+                        reports.update(report)
+                    else:
+                        reports[name] = report
+            except Exception:
+                # as_completed superó el timeout global: devolvemos lo que haya
+                # llegado en vez de tumbar todo el análisis.
+                pass
+
+        # Rellenar cualquier agente que no haya respondido para que el dashboard
+        # nunca muestre "no disponible" por una clave faltante.
+        from agents.base import AgentReport
+        for key in self.agents:
+            if key == "market_context":
+                for sub in ("macro", "sentiment", "catalysts"):
+                    reports.setdefault(sub, AgentReport(
+                        agent_name=sub, score=50,
                         analysis="Tiempo de respuesta excedido.",
-                        pros=[], cons=[], error="timeout"
-                    )
-                if isinstance(report, dict):
-                    reports.update(report)
-                else:
-                    reports[report.agent_name if hasattr(report, "agent_name") else name] = report
+                        pros=[], cons=[], error="timeout"))
+            else:
+                reports.setdefault(key, AgentReport(
+                    agent_name=key, score=50,
+                    analysis="Tiempo de respuesta excedido.",
+                    pros=[], cons=[], error="timeout"))
 
         return reports
 
