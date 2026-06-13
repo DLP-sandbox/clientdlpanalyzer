@@ -21,6 +21,40 @@ CACHE_DIR = Path(__file__).parent.parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 
+# ── Sesión curl_cffi por hilo (impersona Chrome) ──────────────────────────
+# Yahoo Finance rate-limita las IPs de datacenter (Render, AWS, etc.). Pasar
+# una sesión que impersona un navegador real reduce drásticamente esos bloqueos
+# y hace que holders/macro/precios carguen en cloud igual que en local.
+# IMPORTANTE: las sesiones de curl_cffi NO son thread-safe y el orquestador
+# corre los agentes en paralelo, así que usamos UNA sesión por hilo
+# (threading.local). Si la creación falla, degradamos a yfinance normal.
+import threading as _threading
+_yf_local = _threading.local()
+
+
+def _get_yf_session():
+    sess = getattr(_yf_local, "session", None)
+    if sess is None:
+        try:
+            from curl_cffi import requests as _cffi_requests
+            sess = _cffi_requests.Session(impersonate="chrome")
+        except Exception:
+            sess = False  # marcador: curl_cffi no disponible
+        _yf_local.session = sess
+    return sess or None
+
+
+def _yt(ticker: str):
+    """yf.Ticker con la sesión del hilo actual (o sin ella si no está disponible)."""
+    sess = _get_yf_session()
+    if sess is not None:
+        try:
+            return yf.Ticker(ticker, session=sess)
+        except Exception:
+            pass
+    return yf.Ticker(ticker)
+
+
 # ── Helpers de caché ──────────────────────────────────────────────────────
 
 def _cache_path(key: str) -> Path:
@@ -75,7 +109,7 @@ def get_price_history(ticker: str, period: str = "2y", interval: str = "1d") -> 
         df.index = pd.to_datetime(df.index)
         return df
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     df = stock.history(period=period, interval=interval, auto_adjust=True)
     if df.empty:
         return df
@@ -99,7 +133,7 @@ def get_live_price(ticker: str) -> Optional[float]:
         return cached.get("price")
 
     try:
-        stock = yf.Ticker(ticker)
+        stock = _yt(ticker)
         # fast_info es mucho más rápido que info — solo trae datos esenciales
         try:
             price = float(stock.fast_info.get("lastPrice") or stock.fast_info.get("last_price") or 0)
@@ -132,7 +166,7 @@ def get_company_info(ticker: str) -> dict:
             cached["current_price"] = live
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     try:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FT
         with ThreadPoolExecutor(max_workers=1) as ex:
@@ -314,7 +348,7 @@ def get_financials(ticker: str) -> dict:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = {}
 
     try:
@@ -670,14 +704,45 @@ def get_holders_data(ticker: str) -> dict:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = {}
 
     try:
         inst = stock.institutional_holders
         if inst is not None and not inst.empty:
             result["top_institutions"] = inst.head(10).to_dict(orient="records")
-            result["institutional_ownership_pct"] = float(inst["% Out"].sum()) if "% Out" in inst.columns else None
+            # yfinance cambió la columna de "% Out" a "pctHeld"; soportamos ambas.
+            pct_col = "pctHeld" if "pctHeld" in inst.columns else ("% Out" if "% Out" in inst.columns else None)
+            if pct_col:
+                result["institutional_ownership_pct"] = float(inst[pct_col].sum()) * 100
+    except Exception:
+        pass
+
+    try:
+        # major_holders es la fuente MÁS confiable del % total institucional
+        # (institutionsPercentHeld) e insiders (insidersPercentHeld).
+        mh = stock.major_holders
+        if mh is not None and not mh.empty:
+            result["major_holders_raw"] = mh.to_dict()
+            # Formato actual: índice = nombres de breakdown, columna "Value"
+            try:
+                col = mh.columns[0]
+                def _mh(name):
+                    if name in mh.index:
+                        v = mh.loc[name, col]
+                        return float(v) if v is not None else None
+                    return None
+                inst_held = _mh("institutionsPercentHeld")
+                if inst_held is not None:
+                    result["institutional_ownership_pct"] = inst_held * 100
+                ins_held = _mh("insidersPercentHeld")
+                if ins_held is not None:
+                    result["insiders_percent_held"] = ins_held * 100
+                inst_count = _mh("institutionsCount")
+                if inst_count is not None:
+                    result["institutions_count"] = int(inst_count)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -688,13 +753,6 @@ def get_holders_data(ticker: str) -> dict:
             buys = recent[recent.get("Transaction", recent.get("Shares", pd.Series(dtype=str))).astype(str).str.contains("Buy|Purchase", case=False, na=False)]
             result["recent_insider_buys"] = len(buys)
             result["insider_transactions"] = recent[["Date", "Insider", "Position", "Shares", "Value"]].to_dict(orient="records") if all(c in recent.columns for c in ["Date", "Insider", "Position", "Shares", "Value"]) else []
-    except Exception:
-        pass
-
-    try:
-        mh = stock.major_holders
-        if mh is not None and not mh.empty:
-            result["major_holders_raw"] = mh.to_dict()
     except Exception:
         pass
 
@@ -712,7 +770,7 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = []
     now = datetime.now()
 
@@ -809,7 +867,7 @@ def get_macro_data() -> dict:
     for key_name, sym in tickers_map.items():
         try:
             # Usar .history() en lugar de download() para evitar multi-index columns
-            df = yf.Ticker(sym).history(period="3mo")
+            df = _yt(sym).history(period="3mo")
             if df.empty or "Close" not in df.columns:
                 continue
             close = df["Close"].dropna()
@@ -832,7 +890,7 @@ def get_macro_data() -> dict:
     for etf, name in sector_etfs.items():
         try:
             # Usar .history() (no .download) para evitar multi-index column bugs
-            df = yf.Ticker(etf).history(period="1y")
+            df = _yt(etf).history(period="1y")
             if df.empty or "Close" not in df.columns:
                 continue
             close = df["Close"].dropna()
@@ -847,7 +905,7 @@ def get_macro_data() -> dict:
 
     # Yield curve spread (10Y - 2Y)
     try:
-        df2 = yf.download("^IRX", period="5d", interval="1d", auto_adjust=True, progress=False)
+        df2 = yf.download("^IRX", period="5d", interval="1d", auto_adjust=True, progress=False, session=_get_yf_session())
         df10 = result.get("tnx", {})
         if not df2.empty and df10:
             rate_2y = float(df2["Close"].iloc[-1]) / 100
@@ -958,7 +1016,7 @@ def get_earnings_data(ticker: str) -> dict:
     if cached:
         return cached
 
-    stock = yf.Ticker(ticker)
+    stock = _yt(ticker)
     result = {}
     now = pd.Timestamp.now()
 
@@ -1040,12 +1098,12 @@ def get_peer_metrics(peers: list[str], ttl_hours: float = 6) -> dict[str, dict]:
 
     def _fetch_one(t: str) -> tuple:
         try:
-            stock = yf.Ticker(t)
+            stock = _yt(t)
             info = stock.fast_info  # fast_info es mucho más rápido que .info
             # fast_info no tiene márgenes, usamos .info solo si fast_info responde
             full = {}
             try:
-                full = yf.Ticker(t).info or {}
+                full = _yt(t).info or {}
             except Exception:
                 pass
             gm_raw = full.get("grossMargins")
