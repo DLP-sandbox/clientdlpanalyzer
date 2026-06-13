@@ -1765,6 +1765,59 @@ def render_institutional(analysis: StockAnalysis):
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_inst_holders_{analysis.ticker}")
 
+    # ── Actividad reciente de directivos (insiders) ──
+    insider_txns = holders_raw.get("insider_transactions") or []
+    if insider_txns:
+        n_buys = holders_raw.get("recent_insider_buys", 0) or 0
+        n_sells = holders_raw.get("recent_insider_sells", 0) or 0
+        st.markdown('<div class="section-title-bar">👤 Actividad Reciente de Directivos (Insiders)</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='margin:-4px 0 10px;color:#9AA7B8;font-size:0.85rem;'>"
+            f"En las últimas operaciones registradas: "
+            f"<span style='color:#00FF88;font-weight:700;'>{n_buys} compras</span> · "
+            f"<span style='color:#FF3B5C;font-weight:700;'>{n_sells} ventas</span>. "
+            f"Las compras de directivos con su propio dinero suelen ser la señal más valiosa.</div>",
+            unsafe_allow_html=True)
+
+        def _fmt_usd(v):
+            v = abs(float(v or 0))
+            if v >= 1e9: return f"${v/1e9:.1f}B"
+            if v >= 1e6: return f"${v/1e6:.1f}M"
+            if v >= 1e3: return f"${v/1e3:.0f}K"
+            return f"${v:.0f}" if v else "—"
+
+        # Priorizar operaciones con dinero real (las más grandes primero)
+        con_valor = [t for t in insider_txns if (t.get("value") or 0) > 0]
+        muestra = sorted(con_valor, key=lambda t: t.get("value") or 0, reverse=True)[:6] or insider_txns[:6]
+
+        tipo_color = {"compra": "#00FF88", "venta": "#FF3B5C",
+                      "concesión": "#4A9EFF", "donación": "#9B59FF", "otra": "#7A8699"}
+        rows = ""
+        for t in muestra:
+            c = tipo_color.get(t.get("type", "otra"), "#7A8699")
+            nombre = (t.get("insider") or "—").title()
+            rows += (
+                f"<tr>"
+                f"<td style='padding:7px 10px;color:#C7D0DC;font-size:0.82rem;'>{t.get('date','')}</td>"
+                f"<td style='padding:7px 10px;color:#E6ECF3;font-size:0.82rem;font-weight:600;'>{nombre}</td>"
+                f"<td style='padding:7px 10px;color:#8A96A6;font-size:0.78rem;'>{t.get('position','')}</td>"
+                f"<td style='padding:7px 10px;'><span style='color:{c};font-weight:700;font-size:0.78rem;text-transform:uppercase;'>{t.get('type','')}</span></td>"
+                f"<td style='padding:7px 10px;text-align:right;color:#C7D0DC;font-size:0.82rem;font-family:JetBrains Mono,monospace;'>{_fmt_usd(t.get('value'))}</td>"
+                f"</tr>"
+            )
+        _th = ("padding:8px 10px;text-align:left;color:#6B7686;font-size:0.70rem;"
+               "text-transform:uppercase;letter-spacing:0.05em;")
+        st.markdown(
+            f"<div style='border:1px solid rgba(255,255,255,0.07);border-radius:12px;overflow:hidden;margin-bottom:14px;'>"
+            f"<table style='width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='background:rgba(255,255,255,0.03);'>"
+            f"<th style='{_th}'>Fecha</th><th style='{_th}'>Directivo</th>"
+            f"<th style='{_th}'>Cargo</th><th style='{_th}'>Operación</th>"
+            f"<th style='{_th}text-align:right;'>Monto</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table></div>",
+            unsafe_allow_html=True)
+
     # ── Smart Money Signal pill grande ──
     smart_raw = km.get("smart_money_signal") or "neutral"
     smart_display = _translate_status(smart_raw).upper()

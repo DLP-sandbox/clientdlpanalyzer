@@ -768,6 +768,9 @@ def score_institutional(holders, info):
     if isinstance(inst_pct, (int, float)) and inst_pct <= 1.5:
         inst_pct = inst_pct * 100  # viene como fracción
     insider_buys = holders.get("recent_insider_buys", 0) or 0
+    insider_sells = holders.get("recent_insider_sells", 0) or 0
+    insiders_held = holders.get("insiders_percent_held")
+    inst_count = holders.get("institutions_count")
     short_pct = (info.get("short_percent", 0) or 0) * 100
 
     # Insider signal (0-33)
@@ -803,25 +806,46 @@ def score_institutional(holders, info):
 
     pros, cons = [], []
     if insider_buys >= 2:
-        pros.append(f"Compras recientes de insiders ({insider_buys})")
+        pros.append(f"Los directivos compraron acciones {insider_buys} veces hace poco — apuestan con su propio dinero")
     if inst_pct is not None and 40 <= inst_pct <= 85:
-        pros.append(f"Respaldo institucional saludable ({_pct(inst_pct,0)})")
+        pros.append(f"Respaldo sólido de grandes fondos ({_pct(inst_pct,0)} de la empresa en sus manos)")
     if 0 < short_pct < 5:
-        pros.append("Short interest bajo: pocos apuestan en contra")
+        pros.append("Casi nadie apuesta a que la acción baje (short interest muy bajo)")
     if short_pct >= 15:
-        cons.append(f"Short interest alto ({_pct(short_pct,0)}) — apuestas en contra")
+        cons.append(f"Bastantes inversores apuestan a que baje (short interest del {_pct(short_pct,0)} del float)")
+    if insider_sells >= 3 and insider_buys == 0:
+        cons.append(f"Los directivos solo vendieron ({insider_sells} ventas, 0 compras) — sin señal de convicción compradora")
     if inst_pct is not None and inst_pct > 90:
-        cons.append("Demasiada concentración institucional (crowded)")
+        cons.append("Demasiada concentración de fondos (poco margen para que entren más compradores grandes)")
     if not pros:
-        pros.append("Sin señales negativas claras de flujo institucional")
+        pros.append("Sin señales claramente negativas en el flujo de dinero grande")
     if not cons:
-        cons.append("Datos de insiders/holders limitados")
+        cons.append("Sin señales de alerta en el posicionamiento institucional")
 
-    analysis = (
-        f"Propiedad institucional del {_pct(inst_pct,0)} "
-        f"con {insider_buys} compras recientes de insiders. Short interest "
-        f"del {_pct(short_pct,1)} del float (potencial de squeeze '{squeeze}')."
-    )
+    # ── Análisis en lenguaje simple ──────────────────────────────────────
+    partes = []
+    if inst_pct is not None:
+        cuenta = f" (unos {inst_count:,} fondos)" if inst_count else ""
+        partes.append(f"Los grandes fondos de inversión tienen el {_pct(inst_pct,0)} de la empresa{cuenta}, "
+                      f"lo que se llama propiedad institucional: cuando es alta y sana, indica que el dinero "
+                      f"profesional confía en el negocio.")
+    if insider_buys or insider_sells:
+        if insider_buys >= 2 and insider_buys >= insider_sells:
+            partes.append(f"Y algo llamativo: los propios directivos compraron acciones {insider_buys} veces "
+                          f"en las operaciones recientes — cuando ponen su dinero, suele ser buena señal.")
+        elif insider_buys == 0 and insider_sells >= 1:
+            partes.append(f"En las operaciones recientes los directivos solo vendieron ({insider_sells} ventas), "
+                          f"algo normal por liquidez o impuestos, pero sin compras que confirmen convicción.")
+        else:
+            partes.append(f"Los directivos registraron {insider_buys} compras y {insider_sells} ventas recientes "
+                          f"(actividad mixta de insiders).")
+    if short_pct > 0:
+        nivel = ("muy bajo" if short_pct < 3 else "moderado" if short_pct < 10 else "alto")
+        partes.append(f"El short interest (cuántos apuestan a que la acción baje) es del {_pct(short_pct,1)} del "
+                      f"float — un nivel {nivel}.")
+    if not partes:
+        partes.append("No hay suficientes datos de flujo institucional en este momento para sacar conclusiones firmes.")
+    analysis = " ".join(partes)
 
     return {
         "score": score,
@@ -842,8 +866,12 @@ def score_institutional(holders, info):
             "short_interest_dynamic": round(shortd, 1),
         },
         "key_insight": (
-            f"Flujo institucional {'constructivo' if score >= 60 else 'neutral'}: "
-            f"{insider_buys} compras de insiders y short interest {_pct(short_pct,0)}."
+            (f"Lo más relevante: los directivos están comprando ({insider_buys} compras recientes), "
+             f"la señal interna más valiosa, con un respaldo institucional del {_pct(inst_pct,0)}.")
+            if insider_buys >= 2 else
+            (f"Lo más relevante: respaldo institucional del {_pct(inst_pct,0)} pero sin compras de "
+             f"directivos que confirmen convicción interna; pocos apuestan en contra "
+             f"(short interest {_pct(short_pct,0)}).")
         ),
     }
 

@@ -749,10 +749,56 @@ def get_holders_data(ticker: str) -> dict:
     try:
         insiders = stock.insider_transactions
         if insiders is not None and not insiders.empty:
-            recent = insiders.head(20)
-            buys = recent[recent.get("Transaction", recent.get("Shares", pd.Series(dtype=str))).astype(str).str.contains("Buy|Purchase", case=False, na=False)]
-            result["recent_insider_buys"] = len(buys)
-            result["insider_transactions"] = recent[["Date", "Insider", "Position", "Shares", "Value"]].to_dict(orient="records") if all(c in recent.columns for c in ["Date", "Insider", "Position", "Shares", "Value"]) else []
+            recent = insiders.head(20).copy()
+
+            # La descripción de la operación está en la columna "Text"
+            # ("Sale at price...", "Purchase at price...", "Stock Award(Grant)...").
+            # La columna "Transaction" suele venir vacía, por eso clasificamos
+            # desde "Text". Soportamos nombres antiguos por compatibilidad.
+            text_col = next((c for c in ("Text", "Transaction") if c in recent.columns), None)
+            txt = (recent[text_col].astype(str).str.lower()
+                   if text_col else pd.Series([""] * len(recent), index=recent.index))
+
+            is_buy = txt.str.contains("purchase|buy", na=False) & ~txt.str.contains("sale|sell", na=False)
+            is_sell = txt.str.contains("sale|sell", na=False)
+            result["recent_insider_buys"] = int(is_buy.sum())
+            result["recent_insider_sells"] = int(is_sell.sum())
+
+            # La columna de fecha pasó a llamarse "Start Date".
+            date_col = next((c for c in ("Start Date", "Date") if c in recent.columns), None)
+
+            txns = []
+            for _, row in recent.iterrows():
+                t = str(row.get(text_col, "")) if text_col else ""
+                tl = t.lower()
+                if ("purchase" in tl or "buy" in tl) and "sale" not in tl:
+                    tipo = "compra"
+                elif "sale" in tl or "sell" in tl:
+                    tipo = "venta"
+                elif "gift" in tl:
+                    tipo = "donación"
+                elif "award" in tl or "grant" in tl:
+                    tipo = "concesión"
+                else:
+                    tipo = "otra"
+                try:
+                    shares = float(row.get("Shares", 0) or 0)
+                except Exception:
+                    shares = 0.0
+                try:
+                    value = float(row.get("Value", 0) or 0)
+                except Exception:
+                    value = 0.0
+                txns.append({
+                    "date": str(row.get(date_col, ""))[:10] if date_col else "",
+                    "insider": str(row.get("Insider", "")),
+                    "position": str(row.get("Position", "")),
+                    "shares": shares,
+                    "value": value,
+                    "type": tipo,
+                    "text": t,
+                })
+            result["insider_transactions"] = txns
     except Exception:
         pass
 
