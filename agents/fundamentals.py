@@ -2,7 +2,6 @@
 Agente de Análisis Fundamental — evalúa la calidad empresarial cuantitativa:
 calidad, crecimiento, valoración, solidez financiera y potencial de DCF.
 """
-import anthropic
 
 from agents.base import BaseAgent, AgentReport
 from data.market_data import get_company_info, get_financials, compute_quality_ratios, get_earnings_data

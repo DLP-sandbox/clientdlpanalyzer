@@ -3,7 +3,6 @@ Agente de Análisis Técnico — evalúa el setup técnico usando indicadores
 clave, Stage Analysis de Minervini y detección de patrones VCP/breakout.
 Retorna también los datos del chart para visualización en el dashboard.
 """
-import anthropic
 import pandas as pd
 
 from agents.base import BaseAgent, AgentReport

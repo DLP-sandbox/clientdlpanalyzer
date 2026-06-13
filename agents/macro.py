@@ -2,7 +2,6 @@
 Agente Macro & Rotación Sectorial — evalúa el contexto macro para
 determinar si el viento está a favor o en contra de la acción.
 """
-import anthropic
 
 from agents.base import BaseAgent, AgentReport
 from data.market_data import get_macro_data, get_company_info

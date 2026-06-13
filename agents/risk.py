@@ -2,7 +2,6 @@
 Agente de Riesgo & Position Sizing — calcula el R/R cuantitativo,
 stop técnico, target y sizing sugerido. Actúa como multiplicador del score.
 """
-import anthropic
 import numpy as np
 
 from agents.base import BaseAgent, AgentReport

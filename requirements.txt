@@ -12,13 +12,13 @@ python-dotenv>=1.0.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
 fredapi>=0.5.1
-scipy>=1.11.0
-
-# PDF report generation (lead magnet) — sin créditos de Anthropic
-reportlab>=4.0
-kaleido==0.2.1
 Pillow>=10.0
 qrcode[pil]>=7.4
 
-# Cloud persistence (Supabase Postgres) — sobrevive a reinicios del container
+# Cloud persistence (Supabase Postgres)
 supabase>=2.0
+
+# PDF report — instalar solo si se necesita en local:
+# reportlab>=4.0
+# kaleido==0.2.1
+# scipy>=1.11.0

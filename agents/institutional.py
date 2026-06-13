@@ -3,7 +3,6 @@ Agente de Flujo Institucional & Smart Money — detecta movimientos de dinero
 inteligente: cambios en ownership institucional, insider buying/selling,
 short interest y posicionamiento de grandes fondos.
 """
-import anthropic
 
 from agents.base import BaseAgent, AgentReport
 from data.market_data import get_holders_data, get_company_info

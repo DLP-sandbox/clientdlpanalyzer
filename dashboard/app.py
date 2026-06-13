@@ -16,7 +16,6 @@ import time
 from datetime import datetime
 from typing import Optional
 
-import anthropic
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -28,13 +27,24 @@ from dashboard.styles import (
     BLOOMBERG_CSS, get_recommendation_badge, score_color,
     score_css_class, AGENT_ICONS,
 )
-from dashboard.charts import (
-    build_price_chart, build_gauge, build_snowflake,
-    build_score_breakdown, build_mini_gauge, build_rr_chart,
-    build_sector_heatmap, build_compact_gauge, build_rsi_gauge,
-    build_metric_bars, build_earnings_history_chart,
-    build_sentiment_gauge, build_holders_bars,
-)
+# charts se importa lazy para no cargar plotly al arrancar (ahorra ~80MB RAM)
+def _charts():
+    from dashboard import charts as _c
+    return _c
+
+def build_price_chart(*a, **k):        return _charts().build_price_chart(*a, **k)
+def build_gauge(*a, **k):              return _charts().build_gauge(*a, **k)
+def build_snowflake(*a, **k):          return _charts().build_snowflake(*a, **k)
+def build_score_breakdown(*a, **k):    return _charts().build_score_breakdown(*a, **k)
+def build_mini_gauge(*a, **k):         return _charts().build_mini_gauge(*a, **k)
+def build_rr_chart(*a, **k):           return _charts().build_rr_chart(*a, **k)
+def build_sector_heatmap(*a, **k):     return _charts().build_sector_heatmap(*a, **k)
+def build_compact_gauge(*a, **k):      return _charts().build_compact_gauge(*a, **k)
+def build_rsi_gauge(*a, **k):          return _charts().build_rsi_gauge(*a, **k)
+def build_metric_bars(*a, **k):        return _charts().build_metric_bars(*a, **k)
+def build_earnings_history_chart(*a, **k): return _charts().build_earnings_history_chart(*a, **k)
+def build_sentiment_gauge(*a, **k):    return _charts().build_sentiment_gauge(*a, **k)
+def build_holders_bars(*a, **k):       return _charts().build_holders_bars(*a, **k)
 
 # ── Config de página ──────────────────────────────────────────────────────
 st.set_page_config(

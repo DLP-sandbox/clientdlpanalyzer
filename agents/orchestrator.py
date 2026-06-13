@@ -206,7 +206,7 @@ class Orchestrator:
                     pros=[], cons=[], error=str(e)
                 )
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(run_agent, name, agent): name
                 for name, agent in self.agents.items()

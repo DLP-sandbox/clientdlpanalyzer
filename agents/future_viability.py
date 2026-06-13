@@ -3,7 +3,6 @@ Agente de Viabilidad Futura — analiza si el negocio tiene futuro real:
 TAM/SAM, moat competitivo, riesgos de disrupción (AI, regulación, competidores)
 y calidad del management. Usa noticias + descripción del negocio.
 """
-import anthropic
 
 from agents.base import BaseAgent, AgentReport
 from data.market_data import get_company_info, get_news, get_financials, compute_quality_ratios, get_peer_metrics
