@@ -82,12 +82,12 @@ class FundamentalsAgent(BaseAgent):
             if "error" in result and "score" not in result:
                 return self._safe_report(ticker, result["error"])
 
+            # NOTA: NO mezclamos aquí un "snowflake" con claves value/quality/growth
+            # (escala 0-20), porque colisionaba con los sub_scores reales (0-25) y
+            # subestimaba las barras de Calidad/Crecimiento (llegaban a 80, no 100).
+            # El radar "Perfil de Calidad" del Overview se calcula aparte en el
+            # orquestador (_default_snowflake), que ya lee estos sub_scores 0-25.
             sub_scores = result.get("sub_scores", {})
-            snowflake = {
-                "value":   sub_scores.get("valuation", 12) / 25 * 20,
-                "quality": sub_scores.get("quality", 12) / 25 * 20,
-                "growth":  sub_scores.get("growth", 12) / 25 * 20,
-            }
 
             return AgentReport(
                 agent_name=self.name,
@@ -97,7 +97,7 @@ class FundamentalsAgent(BaseAgent):
                 cons=result.get("cons", []),
                 key_metrics=result.get("key_metrics", {}),
                 conviction=result.get("conviction", "MEDIUM"),
-                sub_scores={**sub_scores, **snowflake},
+                sub_scores=sub_scores,
                 raw_data={
                     "ratios": ratios,
                     "key_insight": result.get("key_insight", ""),

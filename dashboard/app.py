@@ -1637,16 +1637,30 @@ def render_fundamentals(analysis: StockAnalysis):
     st.markdown('<div class="section-title-bar">⚖️ Pilares Fundamentales</div>',
                 unsafe_allow_html=True)
 
+    # Compatibilidad con análisis ANTIGUOS: si el sub_scores trae la clave "value"
+    # es que se guardó con el snowflake mezclado, y entonces quality/growth quedaron
+    # en escala 0-20 (no 0-25). Los reescalamos (×1.25) para que las barras lleguen
+    # bien a 0-100. Los análisis nuevos no traen "value" y se usan tal cual.
+    _legacy_scale = "value" in (sub or {})
+
+    def _pillar_score(key, raw):
+        if raw is None:
+            return None
+        if _legacy_scale and key in ("quality", "growth"):
+            raw = float(raw) / 20 * 25  # 0-20 (snowflake viejo) → 0-25 real
+        return float(raw) * 4  # escalar /25 → /100
+
     sub_items = []
     pillars = [
-        ("Calidad",          sub.get("quality"),           "#FFB84D"),
-        ("Crecimiento",      sub.get("growth"),            "#00FF88"),
-        ("Valoración",       sub.get("valuation"),         "#4A9EFF"),
-        ("Solidez Financiera", sub.get("financial_health"), "#9B59FF"),
+        ("Calidad",          "quality",          "#FFB84D"),
+        ("Crecimiento",      "growth",           "#00FF88"),
+        ("Valoración",       "valuation",        "#4A9EFF"),
+        ("Solidez Financiera", "financial_health", "#9B59FF"),
     ]
-    for label, val, color in pillars:
+    for label, key, color in pillars:
+        val = _pillar_score(key, sub.get(key))
         if val is not None:
-            sub_items.append((label, float(val) * 4, color))  # escalar /25 → /100
+            sub_items.append((label, val, color))
 
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
