@@ -1173,7 +1173,17 @@ def render_overview(analysis: StockAnalysis):
                         key=f"chart_overview_snowflake_{analysis.ticker}")
 
     with col_bar:
-        fig = build_score_breakdown(analysis.score_breakdown)
+        # Reconstruimos el desglose desde los REPORTES reales para que cada barra
+        # (incluida Riesgo) coincida SIEMPRE con su pestaña — también en análisis
+        # antiguos cargados de disco cuyo score_breakdown guardado no incluía el
+        # riesgo (antes mostraba 50 fijo).
+        breakdown = dict(analysis.score_breakdown or {})
+        for _k in ("fundamentals", "technical", "future", "institutional",
+                   "catalysts", "macro", "sentiment", "risk"):
+            _rep = analysis.reports.get(_k)
+            if _rep is not None:
+                breakdown[_k] = _rep.score
+        fig = build_score_breakdown(breakdown)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_overview_breakdown_{analysis.ticker}")
 
