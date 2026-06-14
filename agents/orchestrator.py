@@ -277,6 +277,14 @@ class Orchestrator:
                 score_breakdown[key] = 50
                 weighted_score += 50 * weight
 
+        # El Riesgo NO pondera en el composite (no está en WEIGHTS: es una señal
+        # de timing/sizing, no de calidad), PERO el desglose del Overview muestra
+        # una barra "Riesgo". Reflejamos aquí su score REAL para que coincida con
+        # la pestaña de Riesgo. Esto NO altera weighted_score (ya calculado arriba).
+        _risk_rep = reports.get("risk")
+        if _risk_rep is not None:
+            score_breakdown["risk"] = float(_risk_rep.score)
+
         # Versión SIN IA: síntesis POR CÓDIGO (no gasta créditos de API).
         # Genera tesis, fortalezas, riesgos y estrategia a partir de los
         # reportes ya calculados. Mantiene la misma forma de `result` que antes
