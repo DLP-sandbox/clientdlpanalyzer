@@ -162,19 +162,17 @@ def inject_protection():
         // Acceder al DOM real del app Streamlit, no al del componente.
         const doc = (window.parent && window.parent.document) || document;
 
-        // Idempotente: si ya inyectamos antes en este documento, no repetir.
-        if (doc.__dlp_protected) return;
-        doc.__dlp_protected = true;
-
-        // 1. Click derecho → bloqueado
-        doc.addEventListener('contextmenu', function(e) {
+        // ── Bloqueo del menú contextual / atajos / drag ───────────────────
+        // Handlers reutilizables para poder armarlos en CUALQUIER documento
+        // accesible (el del app, el top, el propio componente y cualquier
+        // iframe del mismo origen). Así el click derecho queda bloqueado en
+        // TODA zona de la app, no solo en el documento principal.
+        function _block(e) {
             e.preventDefault();
             e.stopPropagation();
             return false;
-        }, true);
-
-        // 2. Atajos: F12, Ctrl/Cmd+Shift+I/J/C, Ctrl/Cmd+U, Ctrl/Cmd+S
-        doc.addEventListener('keydown', function(e) {
+        }
+        function _blockKeys(e) {
             const k = (e.key || '').toLowerCase();
             const blocked =
                 e.key === 'F12' ||
@@ -186,20 +184,37 @@ def inject_protection():
                 e.stopPropagation();
                 return false;
             }
-        }, true);
-
-        // 3. Drag (arrastrar elementos / links / imágenes)
-        doc.addEventListener('dragstart', function(e) {
-            e.preventDefault();
-            return false;
-        }, true);
-
-        // 4. También sobre el window propio del componente, por si se hace
-        // foco dentro del iframe (raro pero pasa con widgets nativos).
-        document.addEventListener('contextmenu', function(e) {
-            e.preventDefault();
-            return false;
-        }, true);
+        }
+        // Idempotente POR documento: arma los listeners una sola vez en cada
+        // uno (evita apilar listeners en cada rerun de Streamlit).
+        function armDoc(d) {
+            if (!d || d.__dlp_armed) return;
+            try {
+                d.__dlp_armed = true;
+                d.addEventListener('contextmenu', _block, true);  // click derecho
+                d.addEventListener('keydown', _blockKeys, true);  // F12 / DevTools / ver-fuente / guardar
+                d.addEventListener('dragstart', _block, true);    // arrastrar links / imágenes
+            } catch (e) {}
+        }
+        // Arma también todos los iframes del mismo origen (componentes, etc.).
+        function armIframes(root) {
+            if (!root) return;
+            try {
+                var frames = root.querySelectorAll('iframe');
+                for (var i = 0; i < frames.length; i++) {
+                    try { armDoc(frames[i].contentDocument); } catch (e) {}
+                }
+            } catch (e) {}
+        }
+        // Arma todos los documentos accesibles (app + top + componente + iframes).
+        function armEverywhere() {
+            armDoc(doc);
+            armDoc(document);
+            try { armDoc(window.top && window.top.document); } catch (e) {}
+            armIframes(doc);
+            try { if (window.top && window.top.document) armIframes(window.top.document); } catch (e) {}
+        }
+        armEverywhere();
 
         // 5. Eliminar branding de Streamlit Cloud — selectores agresivos.
         const HIDE_SELECTORS = [
@@ -271,16 +286,21 @@ def inject_protection():
             try { if (window.parent && window.parent.document) nukeBranding(window.parent.document); } catch (e) {}
         }
 
-        nukeEverywhere();
+        // Repasa branding + re-arma el bloqueo de click derecho (por si aparece
+        // un iframe/nodo nuevo tras un rerun de Streamlit).
+        function sweep() { nukeEverywhere(); armEverywhere(); }
+
+        sweep();
         try {
-            var observer = new MutationObserver(nukeEverywhere);
+            var observer = new MutationObserver(sweep);
             observer.observe(doc.body || doc.documentElement, {
                 childList: true, subtree: true, attributes: false
             });
         } catch (e) {}
         // Limpieza periódica MUY frecuente (cada 250ms) — garantiza que aunque
-        // Streamlit reinyecte el badge tras un rerun, lo borramos en <500ms.
-        setInterval(nukeEverywhere, 250);
+        // Streamlit reinyecte el badge tras un rerun, lo borramos en <500ms, y
+        // que cualquier zona/iframe nuevo quede con el click derecho bloqueado.
+        setInterval(sweep, 250);
     })();
     </script>
     """, height=0, width=0)
