@@ -1142,8 +1142,10 @@ def _extract_percent(value):
 
 # ── Overview Tab ──────────────────────────────────────────────────────────
 def render_overview(analysis: StockAnalysis):
-    # Fila 1: Gauge + Snowflake + Score breakdown
-    col_gauge, col_snow, col_bar = st.columns([1.2, 1, 1.5])
+    # Fila 1: Gauge (tacómetro) + Snowflake (radar), lado a lado y bien
+    # proporcionados. El desglose de barras baja a su propia fila (abajo) para
+    # que ninguna de las tres se solape ni se corte.
+    col_gauge, col_snow = st.columns([1, 1], gap="medium")
 
     with col_gauge:
         fig = build_gauge(analysis.composite_score, analysis.recommendation)
@@ -1172,20 +1174,21 @@ def render_overview(analysis: StockAnalysis):
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_overview_snowflake_{analysis.ticker}")
 
-    with col_bar:
-        # Reconstruimos el desglose desde los REPORTES reales para que cada barra
-        # (incluida Riesgo) coincida SIEMPRE con su pestaña — también en análisis
-        # antiguos cargados de disco cuyo score_breakdown guardado no incluía el
-        # riesgo (antes mostraba 50 fijo).
-        breakdown = dict(analysis.score_breakdown or {})
-        for _k in ("fundamentals", "technical", "future", "institutional",
-                   "catalysts", "macro", "sentiment", "risk"):
-            _rep = analysis.reports.get(_k)
-            if _rep is not None:
-                breakdown[_k] = _rep.score
-        fig = build_score_breakdown(breakdown)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
-                        key=f"chart_overview_breakdown_{analysis.ticker}")
+    # Fila 2: Desglose por análisis (barras) a todo el ancho, para que se lean
+    # completas las 8 barras sin recortes.
+    # Reconstruimos el desglose desde los REPORTES reales para que cada barra
+    # (incluida Riesgo) coincida SIEMPRE con su pestaña — también en análisis
+    # antiguos cargados de disco cuyo score_breakdown guardado no incluía el
+    # riesgo (antes mostraba 50 fijo).
+    breakdown = dict(analysis.score_breakdown or {})
+    for _k in ("fundamentals", "technical", "future", "institutional",
+               "catalysts", "macro", "sentiment", "risk"):
+        _rep = analysis.reports.get(_k)
+        if _rep is not None:
+            breakdown[_k] = _rep.score
+    fig = build_score_breakdown(breakdown)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                    key=f"chart_overview_breakdown_{analysis.ticker}")
 
     st.markdown("---")
 
