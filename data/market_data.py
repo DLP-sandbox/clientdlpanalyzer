@@ -698,6 +698,145 @@ def get_relative_strength(ticker: str, benchmark: str = "SPY", period: str = "1y
 
 # ── Holders e institucionales ──────────────────────────────────────────────
 
+def _nasdaq_json(path: str) -> Optional[dict]:
+    """GET a la API pública de Nasdaq (api.nasdaq.com) reutilizando la sesión
+    curl_cffi que impersona Chrome. Nasdaq cubre TODAS las acciones de NASDAQ y
+    NYSE, y no rate-limita las IPs de datacenter como sí hace Yahoo. Devuelve el
+    dict 'data' de la respuesta, o None si falla. NUNCA lanza excepción."""
+    url = f"https://api.nasdaq.com{path}"
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+        "Origin": "https://www.nasdaq.com",
+        "Referer": "https://www.nasdaq.com/",
+    }
+    sess = _get_yf_session()
+    try:
+        if sess is not None:
+            resp = sess.get(url, headers=headers, timeout=15)
+        else:
+            resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        return payload.get("data") if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _nasdaq_num(s):
+    """Convierte '1,234.5', '$1,234', '8.94%' → float. None si no se puede."""
+    if s is None:
+        return None
+    try:
+        import re as _re
+        cleaned = _re.sub(r"[,$%\s]", "", str(s))
+        if cleaned in ("", "-", "N/A"):
+            return None
+        v = float(cleaned)
+        return v if v == v else None  # NaN check
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_holders_from_nasdaq(ticker: str) -> dict:
+    """Fallback de institucionales via Nasdaq cuando yfinance falla (rate-limit
+    en cloud). Devuelve solo los campos que consigue, en el MISMO formato que
+    get_holders_data espera aguas abajo (top_institutions con 'Holder'/'% Out',
+    institutional_ownership_pct como número 0-100). NUNCA lanza excepción."""
+    result: dict = {}
+    t = ticker.upper()
+
+    # 1) Propiedad institucional + top holders
+    try:
+        data = _nasdaq_json(
+            f"/api/company/{t}/institutional-holdings"
+            "?limit=15&type=TOTAL&sortColumn=marketValue&sortOrder=DESC"
+        )
+        if data:
+            summ = data.get("ownershipSummary") or {}
+            inst_pct = _nasdaq_num((summ.get("SharesOutstandingPCT") or {}).get("value"))
+            if inst_pct is not None:
+                result["institutional_ownership_pct"] = inst_pct
+
+            total_millions = _nasdaq_num((summ.get("ShareoutstandingTotal") or {}).get("value"))
+            total_shares = total_millions * 1e6 if total_millions else None
+
+            rows = (((data.get("holdingsTransactions") or {}).get("table") or {})
+                    .get("rows") or [])
+            top = []
+            for row in rows[:10]:
+                name = row.get("ownerName")
+                if not name:
+                    continue
+                shares = _nasdaq_num(row.get("sharesHeld"))
+                value = _nasdaq_num(row.get("marketValue"))  # en miles (Nasdaq: $ millones→ ya viene en $ miles)
+                pct = (shares / total_shares) if (shares and total_shares) else None
+                top.append({
+                    "Holder": str(name),
+                    "% Out": pct,                       # fracción (0-1) — build_holders_bars la escala
+                    "Shares": shares,
+                    "Value": value,
+                })
+            if top:
+                result["top_institutions"] = top
+
+            # Nº de instituciones (de la tabla de posiciones activas)
+            for ap in ((data.get("activePositions") or {}).get("rows") or []):
+                if "Total Institutional" in str(ap.get("positions", "")):
+                    cnt = _nasdaq_num(ap.get("holders"))
+                    if cnt:
+                        result["institutions_count"] = int(cnt)
+    except Exception:
+        pass
+
+    # 2) Transacciones de insiders (para la tabla de directivos)
+    try:
+        data = _nasdaq_json(
+            f"/api/company/{t}/insider-trades"
+            "?limit=20&type=ALL&sortColumn=lastDate&sortOrder=DESC"
+        )
+        if data:
+            rows = (((data.get("transactionTable") or {}).get("table") or {})
+                    .get("rows") or [])
+            txns, buys, sells = [], 0, 0
+            for row in rows[:20]:
+                ttype = str(row.get("transactionType", "")).lower()
+                if "buy" in ttype or "purchase" in ttype:
+                    tipo, is_buy = "compra", True
+                elif "sell" in ttype or "sale" in ttype:
+                    tipo, is_buy = "venta", False
+                elif "option" in ttype or "grant" in ttype or "award" in ttype:
+                    tipo, is_buy = "concesión", None
+                else:
+                    tipo, is_buy = "otra", None
+                if is_buy is True:
+                    buys += 1
+                elif is_buy is False:
+                    sells += 1
+                shares = _nasdaq_num(row.get("sharesTraded")) or 0.0
+                price = _nasdaq_num(row.get("lastPrice")) or 0.0
+                txns.append({
+                    "date": str(row.get("lastDate", ""))[:10],
+                    "insider": str(row.get("insider", "")).title(),
+                    "position": str(row.get("relation", "")),
+                    "shares": shares,
+                    "value": shares * price,
+                    "type": tipo,
+                    "text": str(row.get("transactionType", "")),
+                })
+            if txns:
+                result["insider_transactions"] = txns
+                result["recent_insider_buys"] = buys
+                result["recent_insider_sells"] = sells
+    except Exception:
+        pass
+
+    return result
+
+
 def get_holders_data(ticker: str) -> dict:
     key = f"holders_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_HOLDERS)
@@ -802,7 +941,29 @@ def get_holders_data(ticker: str) -> dict:
     except Exception:
         pass
 
-    _save_cache(key, result)
+    # ── Fallback Nasdaq: garantiza institucionales para CUALQUIER ticker de
+    # NASDAQ/NYSE cuando yfinance viene rate-limitado en cloud. Solo rellena lo
+    # que falta; jamás sobreescribe datos buenos de yfinance. ──────────────────
+    need_owners = not result.get("top_institutions")
+    need_pct = result.get("institutional_ownership_pct") is None
+    need_insiders = not result.get("insider_transactions")
+    if need_owners or need_pct or need_insiders:
+        nd = _get_holders_from_nasdaq(ticker)
+        if need_pct and nd.get("institutional_ownership_pct") is not None:
+            result["institutional_ownership_pct"] = nd["institutional_ownership_pct"]
+        if need_owners and nd.get("top_institutions"):
+            result["top_institutions"] = nd["top_institutions"]
+        if result.get("institutions_count") is None and nd.get("institutions_count") is not None:
+            result["institutions_count"] = nd["institutions_count"]
+        if need_insiders and nd.get("insider_transactions"):
+            result["insider_transactions"] = nd["insider_transactions"]
+            result["recent_insider_buys"] = nd.get("recent_insider_buys", 0)
+            result["recent_insider_sells"] = nd.get("recent_insider_sells", 0)
+
+    # Solo cachear si conseguimos algo útil: así un fallo transitorio de red no
+    # queda "congelado" como vacío durante 12h (causa del bug de secciones vacías).
+    if result.get("top_institutions") or result.get("institutional_ownership_pct") is not None:
+        _save_cache(key, result)
     return result
 
 
@@ -1053,10 +1214,58 @@ def get_earnings_from_tradingview(ticker: str) -> dict:
         return {}
 
 
+def _get_earnings_from_nasdaq(ticker: str) -> dict:
+    """Fallback del HISTORIAL de earnings (surprises + beat rate) via Nasdaq
+    cuando yfinance falla. TradingView solo da la fecha del próximo reporte, no
+    el track record; Nasdaq expone los últimos ~4 trimestres de EPS estimado vs
+    reportado para CUALQUIER acción de NASDAQ/NYSE. NUNCA lanza excepción.
+    Devuelve {earnings_history, avg_surprise, beat_count} o {}."""
+    try:
+        data = _nasdaq_json(f"/api/company/{ticker.upper()}/earnings-surprise")
+        if not data:
+            return {}
+        rows = ((data.get("earningsSurpriseTable") or {}).get("rows") or [])
+        now = pd.Timestamp.now()
+        surprises = []
+        for row in rows:
+            est = _nasdaq_num(row.get("consensusForecast"))
+            act = _nasdaq_num(row.get("eps"))
+            surp = _nasdaq_num(row.get("percentageSurprise"))
+            if surp is None and est not in (None, 0) and act is not None:
+                surp = (act - est) / abs(est) * 100
+            if surp is None:
+                continue
+            raw_date = str(row.get("dateReported", ""))
+            try:
+                iso = datetime.strptime(raw_date, "%m/%d/%Y")
+                date_str = iso.strftime("%Y-%m-%d")
+                days_ago = (now - pd.Timestamp(iso)).days
+            except (ValueError, TypeError):
+                date_str = raw_date[:10]
+                days_ago = None
+            surprises.append({
+                "date": date_str,
+                "days_ago": days_ago,
+                "estimate": est,
+                "actual": act,
+                "surprise_pct": float(surp),
+            })
+        if not surprises:
+            return {}
+        return {
+            "earnings_history": surprises,
+            "avg_surprise": sum(s["surprise_pct"] for s in surprises) / len(surprises),
+            "beat_count": sum(1 for s in surprises if s["surprise_pct"] > 0),
+        }
+    except Exception:
+        return {}
+
+
 def get_earnings_data(ticker: str) -> dict:
     """Earnings con días desde HOY al próximo reporte calculados explícitamente.
     Si yfinance falla (rate-limit en cloud), cae automáticamente a TradingView
-    como fallback para garantizar al menos el next_earnings date."""
+    (fecha del próximo reporte) y a Nasdaq (historial de surprises + beat rate)
+    para garantizar que estas secciones nunca queden vacías."""
     key = f"earnings_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_EARNINGS)
     if cached:
@@ -1123,7 +1332,19 @@ def get_earnings_data(ticker: str) -> dict:
         if tv_fallback.get("next_earnings"):
             result.update(tv_fallback)
 
-    _save_cache(key, result)
+    # Si falta el HISTORIAL (beat rate + gráfica de surprises), lo traemos de
+    # Nasdaq. Garantiza el track record para cualquier acción de NASDAQ/NYSE.
+    if not result.get("earnings_history"):
+        nd = _get_earnings_from_nasdaq(ticker)
+        if nd.get("earnings_history"):
+            result["earnings_history"] = nd["earnings_history"]
+            result["avg_surprise"] = nd["avg_surprise"]
+            result["beat_count"] = nd["beat_count"]
+
+    # Solo cachear si conseguimos algo útil, para no congelar un vacío durante
+    # 2h ante un fallo transitorio de red (causa del bug de secciones vacías).
+    if result.get("next_earnings") or result.get("earnings_history"):
+        _save_cache(key, result)
     return result
 
 
