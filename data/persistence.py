@@ -99,6 +99,20 @@ def _supabase_client():
         return None
 
 
+def persistence_mode() -> str:
+    """Indica si la persistencia es DURADERA o EFÍMERA, para poder avisarlo en
+    la UI. Devuelve:
+      - "supabase": credenciales OK y cliente creado → historial sobrevive a
+        reconexiones, redeploys y reinicios del contenedor.
+      - "local": sin Supabase → se usa el disco local, que en Render/Streamlit
+        Cloud es EFÍMERO y se borra en cada reinicio/redeploy.
+    NUNCA lanza excepción."""
+    try:
+        return "supabase" if _supabase_client() is not None else "local"
+    except Exception:
+        return "local"
+
+
 def _make_json_safe(obj):
     """Convierte recursivamente cualquier objeto a tipos JSON-safe.
 

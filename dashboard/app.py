@@ -388,6 +388,34 @@ def render_sidebar():
         </div>
         """, unsafe_allow_html=True)
 
+        # ── Estado de persistencia ──────────────────────────────────────
+        # Avisa de forma visible si el historial se está guardando de forma
+        # DURADERA (Supabase) o solo en disco EFÍMERO (se borra al reiniciar).
+        # Así un fallo de persistencia nunca vuelve a ser silencioso.
+        try:
+            from data.persistence import persistence_mode
+            _pmode = persistence_mode()
+        except Exception:
+            _pmode = "local"
+        if _pmode == "supabase":
+            st.markdown(
+                "<div style='display:flex;align-items:center;gap:6px;justify-content:center;"
+                "margin:2px 0 10px;padding:4px 8px;border-radius:8px;font-size:0.68rem;"
+                "background:rgba(0,255,136,0.08);color:#00FF88;"
+                "border:1px solid rgba(0,255,136,0.25);font-family:JetBrains Mono,monospace;'>"
+                "☁️ Historial sincronizado</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div style='display:flex;align-items:center;gap:6px;justify-content:center;"
+                "margin:2px 0 10px;padding:5px 8px;border-radius:8px;font-size:0.66rem;"
+                "background:rgba(255,184,77,0.10);color:#FFB84D;"
+                "border:1px solid rgba(255,184,77,0.30);font-family:JetBrains Mono,monospace;'>"
+                "⚠️ Solo local · se borra al reiniciar</div>",
+                unsafe_allow_html=True,
+            )
+
         # ── Home ─────────────────────────────────────────────────────────
         if st.button("⌂  Volver al Home", use_container_width=True,
                      key="sidebar_home"):
@@ -731,17 +759,18 @@ def run_analysis(ticker: str):
     # (el recién creado es el más nuevo, así que siempre se mantiene).
     _prune_analyses_in_memory()
 
-    # Guardar a disco en background — no bloqueamos el rerun por IO.
-    # El usuario ve el análisis listo en vez de esperar a que termine
-    # el write a disco (que puede tardar 100-300ms).
+    # Guardar SINCRÓNICAMENTE antes de continuar. Antes era un hilo daemon en
+    # segundo plano, pero si el contenedor se recreaba justo después (redeploy,
+    # reconexión, spin-down) el hilo podía no terminar y el análisis se perdía.
+    # El write (Supabase + copia local) tarda ~0.2-0.8s: un coste mínimo frente
+    # a perder el trabajo. Envuelto en try/except para no romper el flujo si
+    # falla el IO.
     thesis_ok = len(getattr(analysis, "investment_thesis", "") or "") > 200
     if thesis_ok:
-        def _save_bg():
-            try:
-                disk_save(analysis)
-            except Exception:
-                pass
-        _threading.Thread(target=_save_bg, daemon=True).start()
+        try:
+            disk_save(analysis)
+        except Exception:
+            pass
 
     st.rerun()
 
