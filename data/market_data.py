@@ -240,6 +240,7 @@ def get_company_info(ticker: str) -> dict:
     # se rate-limita desde IPs cloud.
     needs_tv = (not result.get("market_cap") or
                 not result.get("pe_ratio") or
+                not result.get("forward_pe") or
                 not result.get("ev_ebitda") or
                 not result.get("revenue_ttm") or
                 not result.get("profit_margin"))
@@ -300,6 +301,7 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "earnings_release_next_date",
                 "float_shares_outstanding_current",
                 "total_shares_outstanding_fundamental",
+                "earnings_per_share_forecast_next_fy",
             )
             .where(col("name") == ticker.upper())
             .limit(1)
@@ -335,6 +337,10 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             "current_price":  _f("close"),
             "market_cap":     _f("market_cap_basic"),
             "pe_ratio":       _f("price_earnings_ttm"),
+            # Forward P/E: TradingView deja 'price_earnings_forward' vacío para
+            # casi todos los tickers, así que si falta lo CALCULAMOS con el
+            # precio y el EPS estimado de consenso (precio / EPS forward). Así el
+            # Forward P/E siempre aparece en cloud (donde yfinance viene vacío).
             "forward_pe":     _f("price_earnings_forward"),
             "ev_ebitda":      _f("enterprise_value_ebitda_ttm"),
             "ps_ratio":       _f("price_sales_ratio"),
@@ -357,6 +363,14 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             "float_shares":       _f("float_shares_outstanding_current"),
             "shares_outstanding": _f("total_shares_outstanding_fundamental"),
         }
+        # Forward P/E calculado si TV no lo trae directo (precio / EPS forward
+        # de consenso). Garantiza que el Forward P/E aparezca en cloud.
+        if out.get("forward_pe") is None:
+            close_px = _f("close")
+            fwd_eps = _f("earnings_per_share_forecast_next_fy")
+            if close_px and fwd_eps and fwd_eps > 0:
+                out["forward_pe"] = round(close_px / fwd_eps, 2)
+
         # recommendation_mark de TV: 1=Strong Buy … 5=Strong Sell → etiqueta
         rec_mark = _f("recommendation_mark")
         if rec_mark is not None:
