@@ -771,7 +771,10 @@ def score_institutional(holders, info):
     insider_sells = holders.get("recent_insider_sells", 0) or 0
     insiders_held = holders.get("insiders_percent_held")
     inst_count = holders.get("institutions_count")
-    short_pct = (info.get("short_percent", 0) or 0) * 100
+    # short_percent puede ser None (sin dato, típico en cloud) → lo tratamos
+    # como desconocido: score neutral y se muestra "N/D" en vez de un 0% falso.
+    short_known = info.get("short_percent") is not None
+    short_pct = (info.get("short_percent") or 0) * 100
 
     # Insider signal (0-33)
     insider = 18.0 + _lin(insider_buys, 0, 5, 0, 14)
@@ -801,7 +804,10 @@ def score_institutional(holders, info):
 
     score = round(insider + instq + shortd, 1)
     insider_sig = "alcista" if insider_buys >= 2 else "neutral"
-    squeeze = "alto" if short_pct >= 15 else "medio" if short_pct >= 8 else "bajo"
+    if not short_known:
+        squeeze = "N/D"
+    else:
+        squeeze = "alto" if short_pct >= 15 else "medio" if short_pct >= 8 else "bajo"
     smart = "acumulando" if insider_buys >= 2 else "neutral"
 
     pros, cons = [], []
@@ -856,7 +862,7 @@ def score_institutional(holders, info):
         "key_metrics": {
             "institutional_ownership": _pct(inst_pct, 0),
             "insider_buying_signal": insider_sig,
-            "short_interest": _pct(short_pct, 1),
+            "short_interest": _pct(short_pct, 1) if short_known else "N/D",
             "squeeze_potential": squeeze,
             "smart_money_signal": smart,
         },
@@ -870,8 +876,9 @@ def score_institutional(holders, info):
              f"la señal interna más valiosa, con un respaldo institucional del {_pct(inst_pct,0)}.")
             if insider_buys >= 2 else
             (f"Lo más relevante: respaldo institucional del {_pct(inst_pct,0)} pero sin compras de "
-             f"directivos que confirmen convicción interna; pocos apuestan en contra "
-             f"(short interest {_pct(short_pct,0)}).")
+             f"directivos que confirmen convicción interna" +
+             (f"; pocos apuestan en contra (short interest {_pct(short_pct,0)})."
+              if short_known else "."))
         ),
     }
 
@@ -921,33 +928,69 @@ def score_risk(risk_metrics, info, ind):
 
     pros, cons = [], []
     if rr >= 1.8:
-        pros.append(f"Relación riesgo/beneficio favorable ({rr:.1f}:1)")
+        pros.append(f"Relación riesgo/beneficio favorable ({rr:.1f}:1): se arriesga poco para lo que se puede ganar")
+    elif rr >= 1.2:
+        pros.append(f"Relación riesgo/beneficio aceptable ({rr:.1f}:1)")
     if atr_pct is not None and atr_pct <= 3:
-        pros.append(f"Volatilidad contenida (ATR {_pct(atr_pct)})")
+        pros.append(f"Volatilidad contenida (ATR {_pct(atr_pct)} diario): permite stops ajustados sin salir por ruido")
     if beta <= 1.1:
-        pros.append(f"Beta moderada ({_num(beta,2)}): menos vaivén que el mercado")
+        pros.append(f"Beta {_num(beta,2)}: se mueve algo menos que el mercado, menos vaivén en la cartera")
+    if risk_pct is not None and risk_pct <= 8:
+        pros.append(f"Stop cercano ({_pct(risk_pct)} desde la entrada): la pérdida máxima queda acotada y definida")
     if rr < 1.2:
-        cons.append(f"Riesgo/beneficio ajustado ({rr:.1f}:1)")
+        cons.append(f"Riesgo/beneficio ajustado ({rr:.1f}:1): el recorrido al objetivo compensa poco el riesgo asumido")
     if atr_pct is not None and atr_pct > 5:
-        cons.append(f"Volatilidad alta (ATR {_pct(atr_pct)})")
+        cons.append(f"Volatilidad alta (ATR {_pct(atr_pct)} diario): obliga a reducir el tamaño de posición y ampliar el stop")
+    if beta >= 1.6:
+        cons.append(f"Beta {_num(beta,2)}: amplifica los movimientos del mercado, más riesgo en correcciones")
+    if risk_pct is not None and risk_pct > 15:
+        cons.append(f"Stop lejano ({_pct(risk_pct)}): activarlo implica aguantar una caída amplia antes de salir")
     if not pros:
         pros.append("Niveles de entrada, protección y objetivo bien definidos")
     if not cons:
         cons.append("Sin riesgos cuantitativos extremos detectados")
 
-    analysis = (
-        f"Entrada en {_money(price)}, protección en "
-        f"{_money(stop)} ({_pct(risk_pct, signed=True)}) y objetivo en {_money(target)} "
-        f"({_pct(reward_pct, signed=True)}), relación riesgo/beneficio {rr:.1f}:1. "
-        f"Volatilidad ATR {_pct(atr_pct)}, beta {_num(beta,2)}."
-    )
+    # ── Análisis en prosa natural (patrón partes) ────────────────────────────
+    partes = []
+    if rr:
+        rr_txt = ("muy favorable" if rr >= 2.5 else "favorable" if rr >= 1.8 else
+                  "aceptable" if rr >= 1.2 else "ajustada")
+        partes.append(
+            f"El plan de trade parte de una entrada en {_money(price)}, con protección en "
+            f"{_money(stop)} ({_pct(risk_pct, signed=True)}) y objetivo en {_money(target)} "
+            f"({_pct(reward_pct, signed=True)}): una relación riesgo/beneficio de {rr:.1f}:1, {rr_txt} — "
+            f"por cada dólar en riesgo se apunta a ganar {rr:.1f}.")
+    if atr_pct is not None:
+        vol_txt = ("baja" if atr_pct <= 2 else "moderada" if atr_pct <= 4 else "alta")
+        efecto = ("y permite operar con tamaño normal y stops ajustados" if atr_pct <= 4 else
+                  "por lo que conviene reducir el tamaño de la posición y dar más aire al stop para no salir por ruido")
+        partes.append(f"La volatilidad es {vol_txt} (ATR diario {_pct(atr_pct)}), {efecto}.")
+    beta_txt = ("se mueve menos que el mercado" if beta <= 0.9 else
+                "acompaña al mercado de cerca" if beta <= 1.2 else
+                "amplifica los vaivenes del mercado")
+    partes.append(f"Con beta {_num(beta,2)}, la acción {beta_txt}, algo a calibrar según cómo esté el entorno general.")
+    if pos:
+        port_loss = (pos or 0) * (risk_pct or 0) / 100.0
+        partes.append(
+            f"Con el sizing implícito ({_pct(pos, 1)} de la cartera), tocar el stop supondría una pérdida "
+            f"acotada de aproximadamente {_pct(port_loss, 2)} del capital total — el riesgo por operación "
+            f"queda bajo control.")
+    # Frase de cierre (la idea de riesgo más importante) — da estructura y peso.
+    partes.append(
+        "En conjunto, " + (
+            f"el perfil es asimétrico a favor (R/R {rr:.1f}:1): hay más para ganar que para perder "
+            f"siempre que se respete el stop." if rr >= 1.8 else
+            f"el margen es ajustado (R/R {rr:.1f}:1): exige disciplina estricta con el stop y un tamaño "
+            f"de posición prudente." if rr < 1.2 else
+            f"es un perfil equilibrado (R/R {rr:.1f}:1) cuyo éxito depende de respetar los niveles definidos."))
+    analysis = " ".join(partes) if partes else "Niveles de riesgo definidos."
 
     return {
         "score": score,
         "conviction": _conv(score),
         "analysis": analysis,
-        "pros": _top(pros, 2),
-        "cons": _top(cons, 2),
+        "pros": _top(pros, 3),
+        "cons": _top(cons, 3),
         "key_metrics": {
             "entry_price": _money(price),
             "stop_loss": _money(stop),
@@ -980,6 +1023,31 @@ _POS_WORDS = ["beat", "beats", "surge", "soar", "record", "upgrade", "raise", "r
 _NEG_WORDS = ["miss", "misses", "plunge", "fall", "drop", "downgrade", "cut", "lawsuit",
               "probe", "investigation", "recall", "warns", "warning", "weak", "decline",
               "layoff", "layoffs", "fraud", "delay", "slump", "loss"]
+
+# Familias temáticas para clasificar la NARRATIVA a partir de los titulares
+# reales (antes era binario por sector → todas "defensivo"). El tema dominante
+# es la familia con más coincidencias en los títulos.
+_THEME_KEYWORDS = {
+    "resultados": ["earnings", "revenue", "profit", "eps", "guidance", "results",
+                   "beat", "miss", "quarter", "sales", "margin", "forecast"],
+    "producto e innovación": ["launch", "product", "release", "unveil", "chip", "model",
+                              "feature", "rollout", "ai", "device", "update", "version"],
+    "legal y regulatorio": ["lawsuit", "probe", "investigation", "regulator", "antitrust",
+                            "fine", "sec", "ftc", "court", "settlement", "ruling", "ban",
+                            "subpoena", "fraud", "scandal"],
+    "movimiento de analistas": ["upgrade", "downgrade", "rating", "price target", "analyst",
+                                "overweight", "underweight", "initiate", "reiterate", "buy",
+                                "sell"],
+    "fusiones y adquisiciones": ["acquisition", "acquire", "merger", "deal", "buyout",
+                                 "stake", "takeover", "acquires", "acquired"],
+    "macro y sector": ["fed", "rates", "inflation", "tariff", "tariffs", "economy",
+                       "jobs", "cpi", "recession", "yields"],
+}
+# Solo estas palabras cuentan como RIESGO REPUTACIONAL real (antes se usaba el
+# conteo total de negativas → casi siempre "medio").
+_REPUTATIONAL_WORDS = ["lawsuit", "probe", "investigation", "fine", "recall", "fraud",
+                       "scandal", "regulator", "antitrust", "breach", "settlement",
+                       "misconduct", "subpoena", "sue", "sued", "ban"]
 
 
 def _score_macro(macro, info):
@@ -1014,10 +1082,18 @@ def _score_macro(macro, info):
     liq = _clamp(liq, 6, 33)
 
     score = round(env + rot + liq, 1)
-    vix_level = ("bajo <20" if (vix or 20) < 20 else "elevado 20-30" if (vix or 20) <= 30 else "alto >30")
-    yc_state = ("invertida" if (yc or 0) < 0 else "plana" if (yc or 0) < 0.3 else "normal")
-    market_env = ("apetito por riesgo" if (vix or 20) < 18 else "aversión al riesgo" if (vix or 20) > 28 else "neutral")
-    sec_mom = ("fuerte" if (sec_ret or 0) > 8 else "débil" if (sec_ret or 0) < 0 else "neutral")
+    # Etiquetas honestas: si de verdad falta el dato (raro con FRED), "N/D" en
+    # vez de un valor por defecto engañoso (antes VIX None→"neutral", curva
+    # None→"plana" para cualquier acción).
+    vix_level = ("N/D" if vix is None else
+                 "bajo <20" if vix < 20 else "elevado 20-30" if vix <= 30 else "alto >30")
+    yc_state = ("N/D" if yc is None else
+                "invertida" if yc < 0 else "plana" if yc < 0.3 else "normal")
+    market_env = ("N/D" if vix is None else
+                  "apetito por riesgo" if vix < 18 else
+                  "aversión al riesgo" if vix > 28 else "neutral")
+    sec_mom = ("N/D" if sec_ret is None else
+               "fuerte" if sec_ret > 8 else "débil" if sec_ret < 0 else "neutral")
 
     pros, cons = [], []
     if (vix or 20) < 18:
@@ -1092,22 +1168,109 @@ def _score_sentiment(news, info):
     contr = _clamp(contr, 8, 33)
 
     score = round(news_s + narr + contr, 1)
-    if pos > neg:
-        overall, mom, contra = "alcista", "mejorando", "sin señal"
-    elif neg > pos:
-        overall, mom, contra = "bajista", "deteriorándose", "comprar el miedo"
-    else:
-        overall, mom, contra = "neutral", "estable", "sin señal"
+    overall = "alcista" if pos > neg else "bajista" if neg > pos else "neutral"
 
+    # ── Tema narrativo REAL: familia de keywords dominante en los titulares ──
+    theme_hits = {fam: 0 for fam in _THEME_KEYWORDS}
+    rep_hits = 0
+    titles = [(it.get("title") or "").lower() for it in news]
+    for t in titles:
+        for fam, words in _THEME_KEYWORDS.items():
+            theme_hits[fam] += sum(1 for w in words if w in t)
+        rep_hits += sum(1 for w in _REPUTATIONAL_WORDS if w in t)
+    best_theme = max(theme_hits, key=theme_hits.get) if titles else None
+    narrative_theme = best_theme if (best_theme and theme_hits[best_theme] > 0) else (
+        "sin cobertura" if n == 0 else "general")
+
+    # ── Riesgo reputacional: SOLO keywords reputacionales (no ruido) ─────────
+    reputational_risk = ("N/D" if n == 0 else
+                         "alto" if rep_hits >= 3 else
+                         "medio" if rep_hits >= 1 else "bajo")
+
+    # ── Momentum de sentimiento: tendencia TEMPORAL real (reciente vs previo) ─
+    def _tone(items):
+        p = q = 0
+        for it in items:
+            t = (it.get("title") or "").lower()
+            p += sum(1 for w in _POS_WORDS if w in t)
+            q += sum(1 for w in _NEG_WORDS if w in t)
+        d = p - q
+        c = p + q
+        return (d / c) if c else 0.0, c
+    recent_items = [it for it in news if (it.get("age_hours") or 9999) < 72]
+    older_items = [it for it in news if (it.get("age_hours") or 9999) >= 72]
+    if n == 0:
+        mom = "N/D"
+    elif recent_items and older_items:
+        rt, _ = _tone(recent_items)
+        ot, _ = _tone(older_items)
+        mom = ("mejorando" if rt - ot > 0.15 else
+               "deteriorándose" if rt - ot < -0.15 else "estable")
+    else:
+        mom = "mejorando" if pos > neg else "deteriorándose" if neg > pos else "estable"
+
+    # ── Señal contraria: por DIVERGENCIA sentimiento vs precio/valuación ─────
+    pe = info.get("pe_ratio")
+    hi = info.get("52w_high") or 0
+    lo = info.get("52w_low") or 0
+    px = info.get("current_price") or 0
+    pos_in_range = ((px - lo) / (hi - lo)) if (hi and lo and hi > lo and px) else None
+    contra = "sin señal"
+    if neg > pos and neg >= 2:
+        # Malas noticias pero el precio aguanta arriba → el mercado las ignora
+        contra = ("comprar el miedo" if (pos_in_range is None or pos_in_range > 0.4)
+                  else "sin señal")
+    elif pos > neg and pos >= 4 and (
+            (pe and pe > 45) or (pos_in_range is not None and pos_in_range > 0.9)):
+        # Euforia + valuación estirada o precio en máximos → cautela
+        contra = "vender la euforia"
+
+    # ── Prosa natural (patrón partes) ────────────────────────────────────────
+    partes = []
+    if n == 0:
+        partes.append("No hay noticias recientes suficientes para leer la narrativa de esta "
+                      "acción; el sentimiento queda sin señal clara por ahora.")
+    else:
+        tono_txt = ("mayormente positivo" if pos > neg else
+                    "mayormente negativo" if neg > pos else "equilibrado")
+        partes.append(f"De {n} titulares recientes ({fresh} de esta semana), el tono es "
+                      f"{tono_txt} ({pos} señales positivas frente a {neg} negativas) y la "
+                      f"narrativa gira en torno a {narrative_theme}.")
+        if mom == "mejorando":
+            partes.append("Y hay una mejora: las noticias más frescas suenan mejor que las de "
+                          "días atrás, señal de momentum de sentimiento al alza.")
+        elif mom == "deteriorándose":
+            partes.append("Ojo: el tono se está deteriorando: los titulares más recientes son "
+                          "peores que los previos, un momentum de sentimiento a la baja.")
+        if reputational_risk in ("medio", "alto"):
+            partes.append(f"Además aparecen señales de riesgo reputacional {reputational_risk} "
+                          f"(temas legales/regulatorios), que conviene vigilar de cerca.")
+        if contra == "comprar el miedo":
+            partes.append("Detalle contrario interesante: pese a las malas noticias, el precio "
+                          "aguanta — el mercado parece estar mirando más allá del ruido.")
+        elif contra == "vender la euforia":
+            partes.append("Señal de cautela contraria: euforia mediática con valuación exigente; "
+                          "conviene no comprar solo por el hype.")
+    analysis = " ".join(partes)
+
+    # ── Pros / cons con criterio ─────────────────────────────────────────────
     pros, cons = [], []
     if pos > neg:
-        pros.append("Titulares recientes con tono mayormente positivo")
+        pros.append(f"Titulares recientes con tono mayormente positivo ({pos} vs {neg}) en torno a {narrative_theme}")
+    if mom == "mejorando":
+        pros.append("El sentimiento mejora: las noticias más recientes son mejores que las previas")
     if fresh >= 3:
-        pros.append(f"Cobertura mediática activa ({fresh} noticias esta semana)")
-    if neg >= 3 and neg > pos:
-        pros.append("Narrativa negativa: posible sobre-reacción a vigilar")
+        pros.append(f"Cobertura mediática activa ({fresh} noticias esta semana): la acción está en el radar")
+    if contra == "comprar el miedo":
+        pros.append("Posible sobre-reacción negativa: el precio ignora las malas noticias (valor contrario)")
     if neg > pos:
-        cons.append("Titulares recientes con tono mayormente negativo")
+        cons.append(f"Titulares recientes con tono mayormente negativo ({neg} vs {pos})")
+    if mom == "deteriorándose":
+        cons.append("El sentimiento se deteriora: el tono empeora en los titulares más recientes")
+    if reputational_risk in ("medio", "alto"):
+        cons.append(f"Riesgo reputacional {reputational_risk}: hay titulares legales/regulatorios")
+    if contra == "vender la euforia":
+        cons.append("Euforia con valuación estirada: riesgo de comprar caro por el hype")
     if n == 0:
         cons.append("Sin noticias recientes para evaluar la narrativa")
     if not pros:
@@ -1118,18 +1281,15 @@ def _score_sentiment(news, info):
     return {
         "score": score,
         "conviction": _conv(score),
-        "analysis": (
-            f"{n} noticias recientes analizadas: {pos} con tono positivo, {neg} negativo. "
-            f"Narrativa global: {overall}."
-        ),
+        "analysis": analysis,
         "pros": _top(pros, 3),
         "cons": _top(cons, 3),
         "key_metrics": {
             "overall_sentiment": overall,
             "sentiment_momentum": mom,
-            "narrative_theme": "crecimiento" if (info.get("sector") in _GROWTH_SECTORS) else "defensivo",
+            "narrative_theme": narrative_theme,
             "contrarian_signal": contra,
-            "reputational_risk": "alto" if neg >= 4 else "medio" if neg >= 2 else "bajo",
+            "reputational_risk": reputational_risk,
         },
         "sub_scores": {
             "news_sentiment": round(news_s, 1),
@@ -1137,12 +1297,15 @@ def _score_sentiment(news, info):
             "contrarian_value": round(contr, 1),
         },
         "dominant_narrative": (
-            f"El flujo de noticias luce {overall}; predominan {max(pos,neg)} señales en esa dirección."
-            if n else "Sin noticias recientes disponibles."
+            f"La conversación sobre la acción gira en torno a {narrative_theme}, con un tono "
+            f"global {overall} ({max(pos, neg)} señales dominantes)."
+            if n else "Sin noticias recientes disponibles para leer la narrativa."
         ),
         "opportunity": (
-            "Narrativa negativa con datos no deteriorados: vigilar posible sobre-reacción."
-            if (neg > pos and neg >= 3) else "No hay divergencia clara."
+            "Narrativa negativa con precio resistente: vigilar posible sobre-reacción (valor contrario)."
+            if contra == "comprar el miedo" else
+            "Euforia mediática con valuación exigente: cautela con entradas por hype."
+            if contra == "vender la euforia" else "No hay divergencia clara entre narrativa y precio."
         ),
     }
 

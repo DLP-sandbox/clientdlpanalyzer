@@ -1834,14 +1834,42 @@ def render_institutional(analysis: StockAnalysis):
     rd = report.raw_data or {}
     holders_raw = rd.get("holders_raw", {}) or {}
 
+    # ── Auto-reparación: si el análisis guardado trae la Propiedad Institucional
+    # o el top de tenedores vacíos (p. ej. análisis viejos guardados antes de los
+    # arreglos, o un hueco puntual de datos), re-consultamos holders frescos
+    # (cacheados 12h) y RELLENAMOS solo lo que falte. Mismo patrón que
+    # render_catalysts usa con earnings; nunca sobrescribe datos buenos. ────────
+    def _tile_empty(v):
+        return (not v) or str(v).strip() in ("", "N/A", "N/D", "—", "None")
+
+    _fresh_km = {}
+    if _tile_empty(km.get("institutional_ownership")) or not holders_raw.get("top_institutions"):
+        try:
+            from data.market_data import get_holders_data, get_company_info
+            from agents.code_engine import score_institutional
+            _fresh_h = get_holders_data(analysis.ticker) or {}
+            if not holders_raw.get("top_institutions") and _fresh_h.get("top_institutions"):
+                holders_raw = _fresh_h
+            if _fresh_h.get("institutional_ownership_pct") is not None:
+                _fresh_km = (score_institutional(
+                    _fresh_h, get_company_info(analysis.ticker) or {}) or {}).get("key_metrics", {}) or {}
+        except Exception:
+            _fresh_km = {}
+
+    def _pick(key, default=""):
+        v = km.get(key)
+        if _tile_empty(v) and not _tile_empty(_fresh_km.get(key)):
+            return _fresh_km.get(key)
+        return v if not _tile_empty(v) else default
+
     # ── KPI tiles del Smart Money ──
     st.markdown('<div class="section-title-bar">🏦 Indicadores Smart Money</div>',
                 unsafe_allow_html=True)
 
-    inst_raw = km.get("institutional_ownership") or ""
-    short_raw = km.get("short_interest") or ""
-    insider_raw = km.get("insider_buying_signal") or "neutral"
-    squeeze_raw = km.get("squeeze_potential") or "bajo"
+    inst_raw = _pick("institutional_ownership", "")
+    short_raw = _pick("short_interest", "")
+    insider_raw = _pick("insider_buying_signal", "neutral")
+    squeeze_raw = _pick("squeeze_potential", "bajo")
 
     insider_level = "good" if "alcista" in insider_raw.lower() else "bad" if "bajista" in insider_raw.lower() else "neutral"
     squeeze_level = "good" if "alto" in squeeze_raw.lower() else "neutral" if "medio" in squeeze_raw.lower() else "warn"
@@ -1922,7 +1950,7 @@ def render_institutional(analysis: StockAnalysis):
             unsafe_allow_html=True)
 
     # ── Smart Money Signal pill grande ──
-    smart_raw = km.get("smart_money_signal") or "neutral"
+    smart_raw = _pick("smart_money_signal", "neutral")
     smart_display = _translate_status(smart_raw).upper()
     signal_color = "#00FF88" if "accumul" in smart_raw.lower() else "#FF3B5C" if "distribut" in smart_raw.lower() else "#4A9EFF"
     st.markdown(f"""
@@ -2204,19 +2232,26 @@ def render_sentiment(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar" style="margin-top:0;">📰 Estado de la Narrativa</div>',
                     unsafe_allow_html=True)
 
-        mom_raw = km.get("sentiment_momentum") or "stable"
-        mom_level = ("good" if "improv" in mom_raw.lower() else
-                     "bad" if "deterior" in mom_raw.lower() else "neutral")
+        # Los niveles/colores se calculan sobre los valores en ESPAÑOL que emite
+        # el motor ("mejorando", "comprar el miedo", "bajo"…). Antes se
+        # comparaban substrings en inglés → nunca coincidían y el color caía a
+        # neutral/warn siempre.
+        mom_raw = km.get("sentiment_momentum") or "estable"
+        _mom = mom_raw.lower()
+        mom_level = ("good" if "mejor" in _mom else
+                     "bad" if "deterior" in _mom else "neutral")
 
-        cont_raw = km.get("contrarian_signal") or "no signal"
-        cont_level = ("good" if "buy the fear" in cont_raw.lower() else
-                      "bad" if "sell the hype" in cont_raw.lower() else "neutral")
+        cont_raw = km.get("contrarian_signal") or "sin señal"
+        _cont = cont_raw.lower()
+        cont_level = ("good" if "miedo" in _cont else
+                      "bad" if "euforia" in _cont else "neutral")
 
         narr_raw = km.get("narrative_theme") or "—"
 
-        rep_raw = km.get("reputational_risk") or "low"
-        rep_level = ("good" if "low" in rep_raw.lower() else
-                     "bad" if "high" in rep_raw.lower() else "warn")
+        rep_raw = km.get("reputational_risk") or "bajo"
+        _rep = rep_raw.lower()
+        rep_level = ("good" if "bajo" in _rep else
+                     "bad" if "alto" in _rep else "warn")
 
         _render_status_pills([
             {"label": "Momentum Sentimiento",

@@ -609,41 +609,83 @@ class Orchestrator:
 
         fund_km = (reports.get("fundamentals").key_metrics if reports.get("fundamentals") else {}) or {}
         pe = fund_km.get("pe_ratio", "N/A")
+        rev_growth = fund_km.get("revenue_growth")
         stage_txt = (reports.get("technical").key_metrics or {}).get("stage", "") if reports.get("technical") else ""
 
-        para1 = (
-            f"Según los datos, {ticker} luce como {qphrase} (calidad estructural {quality:.0f}/100, "
-            f"fundamentales {fund:.0f} y futuro {fut:.0f}). En valoración, su P/E es {pe}. El puntaje "
-            f"compuesto ponderado queda en {weighted_score:.0f}/100, lo que la ubica como «{rec}»."
-        )
-        if rr and entry and stop and target:
-            para2 = (
-                f"En el corto plazo, el gráfico está en {stage_txt or 'tendencia mixta'} y la relación "
-                f"riesgo/beneficio es {rr:.1f}:1 (entrada ~${entry:.2f}, protección ~${stop:.2f}, "
-                f"objetivo ~${target:.2f})."
-            )
-        else:
-            para2 = (
-                f"En el corto plazo, el gráfico está en {stage_txt or 'tendencia mixta'}."
-            )
-        thesis = para1 + "\n\n" + para2
-
+        # Etiquetas de área para hilar la narrativa por el mejor/peor eje.
+        AGENT_ES = {
+            "fundamentals": "los fundamentales", "future": "la calidad a futuro",
+            "technical": "el técnico", "institutional": "el flujo institucional",
+            "macro": "el entorno macro", "catalysts": "los catalizadores", "risk": "el riesgo",
+        }
+        AGENT_LABEL = {
+            "fundamentals": "Fundamentales", "future": "Calidad a futuro",
+            "technical": "Técnico", "institutional": "Flujo institucional",
+            "macro": "Macro", "catalysts": "Catalizadores", "risk": "Riesgo",
+        }
         dims = [(k, reports.get(k)) for k in
                 ("fundamentals", "future", "technical", "institutional", "macro", "catalysts", "risk")
                 if reports.get(k)]
-        strengths = []
-        for k, r in sorted(dims, key=lambda kv: kv[1].score, reverse=True):
+        ranked = sorted(dims, key=lambda kv: kv[1].score, reverse=True)
+        # Para el "motor" y el "freno" de la TESIS usamos ejes del caso de
+        # inversión (negocio), no el riesgo (que mide el setup del trade, no la
+        # calidad del negocio, y suele puntuar alto distorsionando la narrativa).
+        ranked_biz = [x for x in ranked if x[0] != "risk"] or ranked
+        driver_k, driver_r = ranked_biz[0] if ranked_biz else (None, None)
+        brake_k, brake_r = ranked_biz[-1] if ranked_biz else (None, None)
+
+        # ── Tesis en prosa natural (varias frases hiladas, específicas por acción) ──
+        core = []
+        core.append(
+            f"En conjunto, {ticker} se perfila como {qphrase}: calidad estructural {quality:.0f}/100 "
+            f"(fundamentales {fund:.0f}, futuro {fut:.0f}), con un puntaje compuesto de {weighted_score:.0f}/100 "
+            f"que la clasifica como «{rec}» y convicción {conviction.lower()}.")
+        val_extra = (f", acompañado de un crecimiento de ingresos de {rev_growth}"
+                     if isinstance(rev_growth, str) and rev_growth not in ("", "N/A") else "")
+        if quality >= 70:
+            core.append(f"En valoración cotiza a un P/E de {pe}{val_extra}; un múltiplo que el mercado suele "
+                        f"justificar cuando el negocio es de calidad, aunque conviene no sobrepagarlo.")
+        else:
+            core.append(f"En valoración cotiza a un P/E de {pe}{val_extra}; sin una ventaja estructural evidente, "
+                        f"el precio de entrada es determinante para que el caso funcione.")
+        if driver_r is not None and driver_r.pros:
+            core.append(f"El principal motor del caso es {AGENT_ES.get(driver_k, driver_k)} "
+                        f"({driver_r.score:.0f}/100): {driver_r.pros[0]}.")
+        if brake_r is not None and brake_r.cons and brake_k != driver_k:
+            core.append(f"El punto a vigilar más importante es {AGENT_ES.get(brake_k, brake_k)} "
+                        f"({brake_r.score:.0f}/100): {brake_r.cons[0]}.")
+        if rr and entry and stop and target:
+            para2 = (f"En el corto plazo, el gráfico está en {stage_txt or 'tendencia mixta'} y la relación "
+                     f"riesgo/beneficio es de {rr:.1f}:1 (entrada ~${entry:.2f}, protección ~${stop:.2f}, "
+                     f"objetivo ~${target:.2f}).")
+        else:
+            para2 = f"En el corto plazo, el gráfico está en {stage_txt or 'tendencia mixta'}."
+        thesis = " ".join(core) + "\n\n" + para2
+
+        # ── Fortalezas / riesgos etiquetados por área y sin temas repetidos ──
+        strengths, seen_s = [], set()
+        for k, r in ranked:
             if r.score >= 55 and r.pros:
-                strengths.append(r.pros[0])
+                base = r.pros[0]
+                sig = base[:24].lower()
+                if sig in seen_s:
+                    continue
+                seen_s.add(sig)
+                strengths.append(f"{AGENT_LABEL.get(k, k)} ({r.score:.0f}/100): {base}")
             if len(strengths) >= 3:
                 break
         if not strengths:
             strengths = [r.pros[0] for _, r in dims if r.pros][:3]
 
-        risks = []
+        risks, seen_r = [], set()
         for k, r in sorted(dims, key=lambda kv: kv[1].score):
             if r.cons:
-                risks.append(r.cons[0])
+                base = r.cons[0]
+                sig = base[:24].lower()
+                if sig in seen_r:
+                    continue
+                seen_r.add(sig)
+                risks.append(f"{AGENT_LABEL.get(k, k)} ({r.score:.0f}/100): {base}")
             if len(risks) >= 3:
                 break
 

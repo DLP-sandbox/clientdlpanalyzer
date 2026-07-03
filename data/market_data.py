@@ -193,8 +193,10 @@ def get_company_info(ticker: str) -> dict:
         "avg_volume":      info.get("averageVolume", 0),
         "shares_outstanding": info.get("sharesOutstanding", 0),
         "float_shares":    info.get("floatShares", 0),
-        "short_ratio":     info.get("shortRatio", 0),
-        "short_percent":   info.get("shortPercentOfFloat", 0),
+        # None (no 0) cuando falta el dato, para distinguir "sin dato" de un 0
+        # real. En cloud info={} → se rellena luego con el fallback de Nasdaq.
+        "short_ratio":     info.get("shortRatio"),
+        "short_percent":   info.get("shortPercentOfFloat"),
         "beta":            info.get("beta", 1.0),
         "pe_ratio":        info.get("trailingPE", None),
         "forward_pe":      info.get("forwardPE", None),
@@ -243,13 +245,29 @@ def get_company_info(ticker: str) -> dict:
                 not result.get("profit_margin"))
     if needs_tv:
         tv = _get_company_info_from_tradingview(ticker)
+        # Placeholders que deben tratarse como "vacío" para que el fallback los
+        # rellene (antes "Unknown"/"N/A" eran truthy y BLOQUEABAN el merge —
+        # por eso el sector se quedaba en "Unknown" aunque TV sí lo trae).
+        _PLACEHOLDERS = {"unknown", "n/a", "n/d", "", "none"}
         for k, v in tv.items():
-            # Solo rellenar campos que estén vacíos/None/0
-            if not result.get(k) and v is not None:
+            cur = result.get(k)
+            is_empty = (not cur) or (isinstance(cur, str) and cur.strip().lower() in _PLACEHOLDERS)
+            if is_empty and v is not None:
                 result[k] = v
         # Re-derivar name si seguía con el ticker como nombre
         if result.get("name") == ticker and tv.get("name"):
             result["name"] = tv["name"]
+
+    # Short interest: si yfinance no lo trajo (None en cloud), completar con
+    # Nasdaq (acciones en corto / float). Si tampoco hay, se queda None → la UI
+    # mostrará "N/D" en vez de un 0% engañoso.
+    if result.get("short_percent") is None:
+        si = _get_short_interest_from_nasdaq(
+            ticker, float_shares=result.get("float_shares"))
+        if si.get("short_percent") is not None:
+            result["short_percent"] = si["short_percent"]
+        if result.get("short_ratio") is None and si.get("short_ratio") is not None:
+            result["short_ratio"] = si["short_ratio"]
 
     _save_cache(key, result)
 
@@ -280,6 +298,8 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "beta_1_year", "average_volume_30d_calc",
                 "price_target_average", "recommendation_mark",
                 "earnings_release_next_date",
+                "float_shares_outstanding_current",
+                "total_shares_outstanding_fundamental",
             )
             .where(col("name") == ticker.upper())
             .limit(1)
@@ -333,7 +353,20 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             "beta":           _f("beta_1_year"),
             "avg_volume":     _f("average_volume_30d_calc"),
             "target_price":   _f("price_target_average"),
+            # Shares/float — necesarios para calcular short % del float en cloud
+            "float_shares":       _f("float_shares_outstanding_current"),
+            "shares_outstanding": _f("total_shares_outstanding_fundamental"),
         }
+        # recommendation_mark de TV: 1=Strong Buy … 5=Strong Sell → etiqueta
+        rec_mark = _f("recommendation_mark")
+        if rec_mark is not None:
+            out["analyst_rating"] = (
+                "strong_buy" if rec_mark <= 1.5 else
+                "buy"        if rec_mark <= 2.5 else
+                "hold"       if rec_mark <= 3.5 else
+                "sell"       if rec_mark <= 4.5 else
+                "strong_sell"
+            )
         # Limpiar None entries
         return {k: v for k, v in out.items() if v is not None}
     except Exception:
@@ -837,6 +870,35 @@ def _get_holders_from_nasdaq(ticker: str) -> dict:
     return result
 
 
+def _get_short_interest_from_nasdaq(ticker: str, float_shares=None) -> dict:
+    """Fallback de short interest via Nasdaq cuando yfinance falla (rate-limit
+    en cloud). El endpoint da 'interest' (acciones en corto) y 'daysToCover'.
+    Calcula short_percent = interest / float_shares si hay float. Devuelve
+    {short_percent, short_ratio} (solo lo que consigue) o {}. NUNCA lanza."""
+    try:
+        data = _nasdaq_json(
+            f"/api/quote/{ticker.upper()}/short-interest?assetClass=stocks"
+        )
+        if not data:
+            return {}
+        rows = (((data.get("shortInterestTable") or {}).get("rows")) or [])
+        if not rows:
+            return {}
+        latest = rows[0]  # el más reciente (settlementDate desc)
+        out = {}
+        dtc = _nasdaq_num(latest.get("daysToCover"))
+        if dtc is not None:
+            out["short_ratio"] = dtc
+        interest = _nasdaq_num(latest.get("interest"))
+        fs = _nasdaq_num(float_shares) if float_shares else None
+        if interest is not None and fs and fs > 0:
+            # yfinance devuelve short_percent como fracción (0.0137 = 1.37%)
+            out["short_percent"] = interest / fs
+        return out
+    except Exception:
+        return {}
+
+
 def get_holders_data(ticker: str) -> dict:
     key = f"holders_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_HOLDERS)
@@ -1035,7 +1097,43 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     return result
 
 
-# ── Macro Data (sin FRED key, usando yfinance) ────────────────────────────
+# ── Macro Data (FRED preferente si hay key, con fallback a yfinance) ──────
+
+def _get_macro_from_fred() -> dict:
+    """Trae macro clave de FRED (St. Louis Fed): VIX y rendimientos del Tesoro
+    10Y y 2Y REALES. FRED es autoritativo y NO tiene rate-limits desde IPs de
+    datacenter, así que en cloud es mucho más fiable que yfinance. Corrige
+    además el bug histórico de usar ^IRX (T-bill 13 semanas) como si fuera el
+    2Y. Requiere FRED_API_KEY; si no está o falla, devuelve {}. NUNCA lanza."""
+    try:
+        from config.settings import FRED_API_KEY
+        if not FRED_API_KEY:
+            return {}
+        from fredapi import Fred
+        fred = Fred(api_key=FRED_API_KEY)
+
+        def _last(series_id):
+            try:
+                s = fred.get_series(series_id)
+                s = s.dropna()
+                return float(s.iloc[-1]) if len(s) else None
+            except Exception:
+                return None
+
+        out = {}
+        vix = _last("VIXCLS")                 # CBOE VIX (cierre previo)
+        if vix is not None:
+            out["vix"] = {"current": vix, "1m_change": None, "3m_change": None}
+        rate_10y = _last("DGS10")             # 10Y Treasury constant maturity, %
+        rate_2y = _last("DGS2")               # 2Y REAL (no el T-bill 13 semanas)
+        if rate_10y is not None:
+            out["tnx"] = {"current": rate_10y, "1m_change": None, "3m_change": None}
+        if rate_10y is not None and rate_2y is not None:
+            out["yield_curve_spread"] = float(rate_10y - rate_2y)  # ya en puntos %
+        return out
+    except Exception:
+        return {}
+
 
 def get_macro_data() -> dict:
     key = "macro_global"
@@ -1110,7 +1208,9 @@ def get_macro_data() -> dict:
 
     result["sector_performance"] = sector_perf
 
-    # Yield curve spread (10Y - 2Y)
+    # Yield curve spread (10Y - 2Y) vía yfinance como fallback. OJO: usa ^IRX
+    # (T-bill 13 semanas) como proxy del 2Y — aproximado. FRED (abajo) lo
+    # sustituye por el 2Y real cuando hay key.
     try:
         df2 = yf.download("^IRX", period="5d", interval="1d", auto_adjust=True, progress=False, session=_get_yf_session())
         df10 = result.get("tnx", {})
@@ -1118,6 +1218,22 @@ def get_macro_data() -> dict:
             rate_2y = float(df2["Close"].iloc[-1]) / 100
             rate_10y = df10.get("current", 0) / 100
             result["yield_curve_spread"] = float((rate_10y - rate_2y) * 100)
+    except Exception:
+        pass
+
+    # ── FRED (preferente): rellena/corrige VIX y curva de tipos con datos
+    # autoritativos y sin rate-limit. Solo actúa si hay FRED_API_KEY. ─────────
+    try:
+        fred = _get_macro_from_fred()
+        if fred:
+            # VIX: rellenar solo si yfinance no lo trajo (yfinance es intradía).
+            if not (result.get("vix") or {}).get("current") and fred.get("vix"):
+                result["vix"] = fred["vix"]
+            if not (result.get("tnx") or {}).get("current") and fred.get("tnx"):
+                result["tnx"] = fred["tnx"]
+            # Curva: preferir SIEMPRE la de FRED (usa el 2Y real, más correcta).
+            if fred.get("yield_curve_spread") is not None:
+                result["yield_curve_spread"] = fred["yield_curve_spread"]
     except Exception:
         pass
 
