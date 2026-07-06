@@ -556,6 +556,16 @@ def _ticker_exists_on_yahoo(ticker: str) -> bool:
         return True
 
 
+def _is_analyzable_stock(ticker: str) -> bool:
+    """True si el ticker es una acción analizable; False si es ETF/cripto/etc.
+    Fail-open ante cualquier error (nunca bloquea una acción real)."""
+    try:
+        from data.market_data import is_stock_ticker
+        return is_stock_ticker(ticker)
+    except Exception:
+        return True
+
+
 # ── Run Analysis ──────────────────────────────────────────────────────────
 def _debug_log(msg: str) -> None:
     """Escribe a /tmp/dlp_debug.log con timestamp para depurar el flujo real."""
@@ -609,6 +619,18 @@ def run_analysis(ticker: str):
             _debug_log(f"  yahoo says {ticker} does not exist — aborting")
             return
         _debug_log(f"  yahoo confirmed {ticker} exists")
+
+        # 2b. Debe ser una ACCIÓN. Si es un ETF o una criptomoneda (BTC, SPY…),
+        #     abortamos con un mensaje simple — este análisis es solo de acciones.
+        with st.spinner(f"Verificando que {ticker} sea una acción…"):
+            _is_stock = _is_analyzable_stock(ticker)
+        if not _is_stock:
+            st.error(
+                f"❌ El nombre ingresado (**{ticker}**) no es una acción. "
+                "El análisis solo está disponible para acciones."
+            )
+            _debug_log(f"  {ticker} is not a stock (ETF/crypto/other) — aborting")
+            return
 
     existing = st.session_state.analyses.get(ticker)
     if existing is not None:

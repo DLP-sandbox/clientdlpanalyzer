@@ -387,6 +387,54 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
         return {}
 
 
+# ── Clasificación de ticker (acción vs ETF/cripto) ─────────────────────────
+
+def is_stock_ticker(ticker: str) -> bool:
+    """True si el ticker es una ACCIÓN analizable (equity o ADR). False si es
+    claramente ETF, criptomoneda, índice, fondo o divisa.
+
+    IMPORTANTE — FAIL-OPEN: si ninguna fuente da un veredicto claro, devuelve
+    True (permitir). Así jamás se bloquea una acción real por falta de datos.
+    NUNCA lanza excepción.
+
+    Estrategia: TradingView primero (sin rate-limit en cloud, identifica
+    acciones/ADR con certeza y sin tocar Yahoo); si TV no lo cubre (los ETF y
+    cripto NO salen en el screener de acciones), se confirma con el
+    `quote_type` de `fast_info` (llamada ligera ~1KB)."""
+    t = (ticker or "").strip().upper()
+    if not t:
+        return True
+
+    # 1. TradingView — screener de acciones de EE.UU.
+    try:
+        from tradingview_screener import Query, col
+        _, df = (Query().select("name", "type")
+                 .where(col("name") == t).limit(1).get_scanner_data())
+        if df is not None and not df.empty:
+            typ = str(df.iloc[0].get("type") or "").lower()
+            if typ in ("stock", "dr", "preferred", "right"):
+                return True          # acción común / ADR / preferente
+            if typ:                  # 'fund' u otro tipo no-acción
+                return False
+    except Exception:
+        pass
+
+    # 2. quote_type de Yahoo (ligero) para lo que TV no lista (ETF/cripto).
+    try:
+        qt = str((_yt(t).fast_info.get("quote_type")
+                  or _yt(t).fast_info.get("quoteType") or "")).upper()
+        if qt == "EQUITY":
+            return True
+        if qt in ("ETF", "CRYPTOCURRENCY", "MUTUALFUND", "INDEX",
+                  "CURRENCY", "FUTURE", "OPTION"):
+            return False
+    except Exception:
+        pass
+
+    # 3. Sin veredicto claro → permitir (nunca bloquear una acción real).
+    return True
+
+
 # ── Métricas financieras ───────────────────────────────────────────────────
 
 def get_financials(ticker: str) -> dict:
