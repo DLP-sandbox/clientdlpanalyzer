@@ -3077,6 +3077,87 @@ section[data-testid="stSidebar"] {
     background: rgba(255,184,77,0.50);
 }
 
+/* ── 22. COLAPSAR / EXPANDIR SIDEBAR (mismo estilo que "Volver al Home") ── */
+
+/* Botón minimizar («) — superpuesto sobre la MISMA línea del logo "◈ DLP",
+   arriba a la derecha. Se posiciona en absoluto para no alterar el brand
+   (que conserva su centrado y su subrayado a todo el ancho). */
+[data-testid="stSidebarUserContent"] {
+    position: relative !important;
+}
+[data-testid="stSidebar"] [class*="st-key-sidebar_collapse_btn"] {
+    position: absolute !important;
+    top: 14px !important;
+    right: 4px !important;
+    z-index: 20 !important;
+    width: auto !important;
+    margin: 0 !important;
+}
+[data-testid="stSidebar"] [class*="st-key-sidebar_collapse_btn"] button {
+    background: linear-gradient(135deg, rgba(255,184,77,0.15), rgba(255,145,0,0.10)) !important;
+    border: 1px solid rgba(255,184,77,0.40) !important;
+    color: #FFB84D !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.25rem !important;
+    line-height: 1 !important;
+    letter-spacing: 0.05em !important;
+    border-radius: 8px !important;
+    padding: 6px 12px !important;
+    min-height: 0 !important;
+    width: auto !important;
+    box-shadow: 0 2px 10px rgba(255,184,77,0.08) !important;
+    transition: all 0.20s ease !important;
+}
+[data-testid="stSidebar"] [class*="st-key-sidebar_collapse_btn"] button:hover {
+    background: linear-gradient(135deg, rgba(255,184,77,0.28), rgba(255,145,0,0.18)) !important;
+    border-color: rgba(255,184,77,0.70) !important;
+    color: #FFFFFF !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 18px rgba(255,184,77,0.25) !important;
+}
+
+/* Botón expandir (») — fijo arriba a la izquierda cuando el sidebar está oculto.
+   Ponemos position:fixed en el CONTENEDOR para que no deje hueco en el flujo. */
+[class*="st-key-sidebar_expand_btn"] {
+    position: fixed !important;
+    top: 12px !important;
+    left: 12px !important;
+    z-index: 999990 !important;
+    width: auto !important;
+    margin: 0 !important;
+}
+[class*="st-key-sidebar_expand_btn"] button {
+    background: linear-gradient(135deg, rgba(255,184,77,0.15), rgba(255,145,0,0.10)) !important;
+    border: 1px solid rgba(255,184,77,0.40) !important;
+    color: #FFB84D !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.95rem !important;
+    line-height: 1 !important;
+    letter-spacing: 0.05em !important;
+    border-radius: 8px !important;
+    padding: 7px 12px !important;
+    min-height: 0 !important;
+    width: auto !important;
+    box-shadow: 0 2px 12px rgba(255,184,77,0.15) !important;
+    transition: all 0.20s ease !important;
+}
+[class*="st-key-sidebar_expand_btn"] button:hover {
+    background: linear-gradient(135deg, rgba(255,184,77,0.28), rgba(255,145,0,0.18)) !important;
+    border-color: rgba(255,184,77,0.70) !important;
+    color: #FFFFFF !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 20px rgba(255,184,77,0.30) !important;
+}
+
+/* Ocultar el "resize handle" del borde del sidebar: parecía arrastrable pero
+   el ancho está fijado, así que confundía. (Refuerzo por JS en inject_protection
+   que oculta cualquier elemento con cursor de redimensionar.) */
+[data-testid="stSidebar"] [class*="e6f82ta3"] {
+    display: none !important;
+}
+
 </style>
 """
 

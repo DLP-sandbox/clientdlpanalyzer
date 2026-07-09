@@ -99,6 +99,7 @@ def init_state():
         # Scanner personalizable
         "scanner_config_open": False,                # mostrar página de configuración
         "scanner_filters":     dict(SCANNER_DEFAULTS),  # selección UI actual
+        "sidebar_collapsed":   False,                # columna lateral minimizada
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -286,9 +287,28 @@ def inject_protection():
             try { if (window.parent && window.parent.document) nukeBranding(window.parent.document); } catch (e) {}
         }
 
+        // Oculta el "resize handle" del borde del sidebar (parecía arrastrable
+        // pero el ancho está fijado). Robusto: busca cualquier elemento dentro
+        // del sidebar cuyo cursor calculado sea de redimensionar y lo oculta.
+        function hideSidebarResizer() {
+            try {
+                var sb = doc.querySelector('[data-testid="stSidebar"]');
+                if (!sb) return;
+                var view = doc.defaultView || window;
+                var els = sb.querySelectorAll('div');
+                for (var i = 0; i < els.length; i++) {
+                    var cur = '';
+                    try { cur = view.getComputedStyle(els[i]).cursor; } catch (e) {}
+                    if (cur === 'col-resize' || cur === 'ew-resize') {
+                        els[i].style.display = 'none';
+                    }
+                }
+            } catch (e) {}
+        }
+
         // Repasa branding + re-arma el bloqueo de click derecho (por si aparece
-        // un iframe/nodo nuevo tras un rerun de Streamlit).
-        function sweep() { nukeEverywhere(); armEverywhere(); }
+        // un iframe/nodo nuevo tras un rerun de Streamlit) + oculta el resizer.
+        function sweep() { nukeEverywhere(); armEverywhere(); hideSidebarResizer(); }
 
         sweep();
         try {
@@ -387,6 +407,13 @@ def render_sidebar():
             <div class="sidebar-brand-sub">MARKET ANALYZER</div>
         </div>
         """, unsafe_allow_html=True)
+
+        # ── Botón minimizar columna — el CSS lo posiciona (absoluto) sobre
+        #    la misma línea del logo, arriba a la derecha. ─────────────────
+        if st.button("«", key="sidebar_collapse_btn",
+                     help="Minimizar la columna"):
+            st.session_state.sidebar_collapsed = True
+            st.rerun()
 
         # ── Home ─────────────────────────────────────────────────────────
         if st.button("⌂  Volver al Home", use_container_width=True,
@@ -3293,11 +3320,31 @@ def render_welcome():
 
 
 # ── Main App ──────────────────────────────────────────────────────────────
+def _apply_sidebar_collapse():
+    """Si la columna está minimizada: la oculta (el contenido principal se
+    reajusta solo) y muestra un botón «»» arriba a la izquierda para reabrirla.
+    Puramente visual — no toca ningún dato ni flujo; el sidebar se sigue
+    renderizando (estado intacto), solo se oculta con CSS."""
+    if not st.session_state.get("sidebar_collapsed"):
+        return
+    # Ocultar el sidebar. Mayor especificidad (body …) para ganar al ancho fijo.
+    st.markdown(
+        "<style>body [data-testid='stSidebar'],"
+        "body section[data-testid='stSidebar']{display:none !important;}</style>",
+        unsafe_allow_html=True,
+    )
+    # Botón para reabrir (arriba a la izquierda, fijo vía CSS).
+    if st.button("»", key="sidebar_expand_btn", help="Mostrar la columna"):
+        st.session_state.sidebar_collapsed = False
+        st.rerun()
+
+
 def main():
     # Sidebar lateral persistente con Home + Historial (análisis + escaneos).
     # Se renderiza SIEMPRE en cada vista; el contenido viene de disco así
     # que sobrevive a reinicios de la app.
     render_sidebar()
+    _apply_sidebar_collapse()
 
     render_header()
 
