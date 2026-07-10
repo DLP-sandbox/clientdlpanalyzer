@@ -33,6 +33,15 @@ _yf_local = _threading.local()
 
 
 def _get_yf_session():
+    # Interruptor de emergencia: si DLP_DISABLE_CURL_CFFI está definido, NO se
+    # usa curl_cffi (la librería nativa que impersona Chrome). curl_cffi puede
+    # provocar SIGSEGV (crash nativo, exit 139) bajo carga en hilos paralelos.
+    # Con el toggle activo se cae a yfinance/requests normales — más sujeto al
+    # rate-limit de Yahoo, pero ya cubierto por los fallbacks de TradingView y
+    # Nasdaq. Es un "kill switch" sin necesidad de tocar código.
+    import os as _os
+    if _os.environ.get("DLP_DISABLE_CURL_CFFI"):
+        return None
     sess = getattr(_yf_local, "session", None)
     if sess is None:
         try:

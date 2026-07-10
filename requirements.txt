@@ -1,6 +1,6 @@
 anthropic>=0.40.0
 yfinance>=0.2.50
-curl_cffi>=0.7.0
+curl_cffi==0.13.0     # pineado: versión validada estable en local (evita que Render instale un build con regresión de segfault)
 tradingview-screener>=2.5.0
 pandas>=2.0.0
 ta>=0.10.2
