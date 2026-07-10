@@ -197,7 +197,10 @@ def get_company_info(ticker: str) -> dict:
         # real. En cloud info={} → se rellena luego con el fallback de Nasdaq.
         "short_ratio":     info.get("shortRatio"),
         "short_percent":   info.get("shortPercentOfFloat"),
-        "beta":            info.get("beta", 1.0),
+        # None (no 1.0) cuando falta: un default 1.0 es "truthy" y BLOQUEA el
+        # fallback de TradingView (beta_1_year), dejando beta=1.0 para todas en
+        # cloud. Con None, el merge TV la rellena.
+        "beta":            info.get("beta"),
         "pe_ratio":        info.get("trailingPE", None),
         "forward_pe":      info.get("forwardPE", None),
         "ps_ratio":        info.get("priceToSalesTrailing12Months", None),
@@ -215,7 +218,12 @@ def get_company_info(ticker: str) -> dict:
         "gross_margin_yf":     info.get("grossMargins"),                   # decimal, ej: 0.699
         "roe_yf":              info.get("returnOnEquity"),                 # decimal, ej: 0.22
         "roa_yf":              info.get("returnOnAssets"),                 # decimal
-        "debt_equity_yf":      info.get("debtToEquity"),                   # ratio tal como muestra YF
+        # yfinance da debtToEquity en % (ej. 79.5 = 0.80x). Lo normalizamos a
+        # RATIO (÷100) para que sea la MISMA escala que TradingView y que el
+        # cálculo deuda/equity — así la salud financiera y el tile D/E son
+        # correctos y consistentes en local y cloud.
+        "debt_equity_yf":      (info.get("debtToEquity") / 100.0
+                                if info.get("debtToEquity") is not None else None),
         "revenue_ttm":         info.get("totalRevenue"),                   # valor absoluto TTM
         "ebitda_yf":           info.get("ebitda"),                         # valor absoluto
         "revenue_growth_yf":   info.get("revenueGrowth"),                  # decimal YoY directo
@@ -302,6 +310,8 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "float_shares_outstanding_current",
                 "total_shares_outstanding_fundamental",
                 "earnings_per_share_forecast_next_fy",
+                "total_revenue_yoy_growth_ttm",
+                "earnings_per_share_diluted_yoy_growth_ttm",
             )
             .where(col("name") == ticker.upper())
             .limit(1)
@@ -353,6 +363,11 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             "gross_margin_yf":     _pct_to_dec("gross_margin"),
             "roe_yf":              _pct_to_dec("return_on_equity"),
             "roa_yf":              _pct_to_dec("return_on_assets"),
+            # Crecimiento YoY: TV lo da en % → a decimal (formato yfinance) para
+            # que compute_quality_ratios lo multiplique por 100 correctamente.
+            # Sin esto, la barra "Crecimiento" salía constante en cloud.
+            "revenue_growth_yf":   _pct_to_dec("total_revenue_yoy_growth_ttm"),
+            "earnings_growth_yf":  _pct_to_dec("earnings_per_share_diluted_yoy_growth_ttm"),
             # Ratios sin conversión (mismo formato en YF y TV)
             "debt_equity_yf":      _f("debt_to_equity"),
             "current_ratio_yf":    _f("current_ratio_quarterly"),

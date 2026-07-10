@@ -1360,7 +1360,7 @@ def render_overview(analysis: StockAnalysis):
                 st.markdown(f'<div class="veto-item">{veto}</div>', unsafe_allow_html=True)
 
     with col_thesis:
-        st.markdown("#### 👔 Tesis de Inversión — Orquestador")
+        st.markdown("#### 👔 Tesis de Inversión")
         st.markdown(
             f'<div class="analysis-card"><div class="analysis-text">{analysis.investment_thesis}</div></div>',
             unsafe_allow_html=True,

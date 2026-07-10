@@ -97,12 +97,15 @@ def score_fundamentals(info, financials, ratios):
         val += _lin(fcfy, 0, 8, -2, 6)
     val = _clamp(val, 3, 25)
 
-    # Salud financiera (0-25)
-    health = _lin(de, 0, 250, 25, 6, default=15)
+    # Salud financiera (0-25). `de` (deuda/equity) viene ya normalizado como
+    # RATIO (0.8 = 80%). Rango sano típico 0–2.5x. Se pondera también la
+    # liquidez (current ratio) y la generación de caja (fcf yield) para que la
+    # barra diferencie de verdad y no se pegue al 100%.
+    health = _lin(de, 0.0, 2.5, 24, 6, default=14)
     if cr is not None:
-        health += _lin(cr, 0.8, 2.0, -3, 3)
-    if fcfy is not None and fcfy > 0:
-        health += 2
+        health += _lin(cr, 0.8, 2.5, -4, 4)
+    if fcfy is not None:
+        health += _lin(fcfy, 0, 8, -2, 3)
     health = _clamp(health, 4, 25)
 
     score = round(quality + growth + val + health, 1)
@@ -258,7 +261,7 @@ def score_fundamentals(info, financials, ratios):
             "operating_margin": _pct(om),
             "fcf_yield": _pct(fcfy),
             "roic": _pct(roic),
-            "debt_equity": _num(de, 0),
+            "debt_equity": _num(de, 2),
             "pe_ratio": _num(pe, 1),
             "ev_ebitda": _num(ev, 1),
         },
