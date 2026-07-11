@@ -17,6 +17,17 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore")
 
+# Silenciar el ruido de yfinance cuando Yahoo devuelve 401/"Invalid Crumb" o
+# rate-limita (esperado en cloud desde IPs de datacenter). NO es un error fatal
+# ni tumba la app: los fallbacks de TradingView/Nasdaq/FRED cubren el dato.
+# Esto solo evita ensuciar los logs con esos mensajes.
+import logging as _logging
+for _noisy in ("yfinance", "urllib3", "curl_cffi", "peewee"):
+    try:
+        _logging.getLogger(_noisy).setLevel(_logging.CRITICAL)
+    except Exception:
+        pass
+
 CACHE_DIR = Path(__file__).parent.parent / ".cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
