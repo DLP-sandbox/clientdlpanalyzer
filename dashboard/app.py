@@ -2080,9 +2080,9 @@ def render_catalysts(analysis: StockAnalysis):
                   "#FF3B5C" if "deterior" in sent_level_str else "#FFB84D")
 
     _render_metric_tiles([
-        {"icon": "📅", "label": "Próximo Earnings",
+        {"icon": "📅", "label": "Próximo Reporte",
          "value": days_str, "color": next_color, "tooltip": next_tooltip},
-        {"icon": "🎯", "label": "Beat Rate",
+        {"icon": "🎯", "label": "Tasa de Aciertos",
          "value": beat_rate_str, "color": beat_color, "tooltip": beat_tooltip},
         {"icon": "🚀", "label": "Sorpresa Promedio",
          "value": avg_surp_str, "color": avg_surp_color, "tooltip": avg_surp_tooltip},
@@ -2284,7 +2284,7 @@ def render_sentiment(analysis: StockAnalysis):
              "sub": f"{rd.get('news_count', 0)} noticias"},
             {"label": "Señal Contraria",
              "value": _clean_tile_value(cont_raw, max_len=14),
-             "level": cont_level, "sub": "Buy fear / Sell hype"},
+             "level": cont_level, "sub": "Comprar miedo / Vender euforia"},
             {"label": "Riesgo Reputacional",
              "value": _clean_tile_value(rep_raw, max_len=10),
              "level": rep_level, "sub": "ESG / regulatorio"},
