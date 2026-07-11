@@ -175,11 +175,19 @@ def get_company_info(ticker: str) -> dict:
             cached["current_price"] = live
         return cached
 
-    stock = _yt(ticker)
     try:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FT
+
+        def _fetch_info():
+            # IMPORTANTE: crear el Ticker (y por tanto su sesión curl_cffi)
+            # DENTRO de este hilo worker. Antes se creaba en el hilo llamante y
+            # se usaba aquí → una sesión curl_cffi usada en OTRO hilo. curl_cffi
+            # NO es thread-safe → causaba SIGSEGV (crash nativo, exit 139) en la
+            # nube. Creándolo aquí, la sesión es thread-local a este worker.
+            return (_yt(ticker).info or {})
+
         with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(lambda: stock.info or {})
+            fut = ex.submit(_fetch_info)
             try:
                 info = fut.result(timeout=20)
             except FT:
