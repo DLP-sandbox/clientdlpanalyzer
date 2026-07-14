@@ -64,6 +64,28 @@ def _get_yf_session():
     return sess or None
 
 
+# ── Pool de hilos PERSISTENTE para IO de red ───────────────────────────────
+# Se crea UNA sola vez y se reutiliza en TODAS las llamadas. Antes cada
+# get_company_info / get_peer_metrics abría y cerraba su propio ThreadPoolExecutor,
+# de modo que los hilos —y sus sesiones curl_cffi thread-local— se creaban y
+# DESTRUÍAN en cada análisis. Esa destrucción repetida de sesiones nativas era la
+# causa del SIGSEGV (exit 139) aleatorio en Render (la memoria estaba bien, ~55%).
+# Con un pool persistente los hilos viven todo el proceso y sus sesiones no se
+# destruyen en runtime → se elimina el churn que provocaba el segfault.
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+_IO_POOL = None
+_IO_POOL_LOCK = _threading.Lock()
+
+
+def _io_pool():
+    global _IO_POOL
+    if _IO_POOL is None:
+        with _IO_POOL_LOCK:
+            if _IO_POOL is None:
+                _IO_POOL = _ThreadPoolExecutor(max_workers=8, thread_name_prefix="dlp-io")
+    return _IO_POOL
+
+
 def _yt(ticker: str):
     """yf.Ticker con la sesión del hilo actual (o sin ella si no está disponible)."""
     sess = _get_yf_session()
@@ -187,22 +209,19 @@ def get_company_info(ticker: str) -> dict:
         return cached
 
     try:
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FT
+        from concurrent.futures import TimeoutError as FT
 
         def _fetch_info():
-            # IMPORTANTE: crear el Ticker (y por tanto su sesión curl_cffi)
-            # DENTRO de este hilo worker. Antes se creaba en el hilo llamante y
-            # se usaba aquí → una sesión curl_cffi usada en OTRO hilo. curl_cffi
-            # NO es thread-safe → causaba SIGSEGV (crash nativo, exit 139) en la
-            # nube. Creándolo aquí, la sesión es thread-local a este worker.
+            # El Ticker (y su sesión curl_cffi) se crea DENTRO del hilo worker del
+            # pool persistente, así la sesión es thread-local a ese hilo y no se
+            # comparte ni se destruye por llamada (evita el SIGSEGV nativo).
             return (_yt(ticker).info or {})
 
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_fetch_info)
-            try:
-                info = fut.result(timeout=20)
-            except FT:
-                info = {}
+        fut = _io_pool().submit(_fetch_info)
+        try:
+            info = fut.result(timeout=20)
+        except FT:
+            info = {}
     except Exception:
         info = {}
 
@@ -1582,7 +1601,7 @@ def get_peer_metrics(peers: list[str], ttl_hours: float = 6) -> dict[str, dict]:
     if cached:
         return cached
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
+    from concurrent.futures import as_completed, TimeoutError as FuturesTimeout
 
     def _fetch_one(t: str) -> tuple:
         try:
@@ -1609,17 +1628,19 @@ def get_peer_metrics(peers: list[str], ttl_hours: float = 6) -> dict[str, dict]:
             return t, {}
 
     result = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(_fetch_one, t): t for t in peers[:3]}
-        try:
-            for future in as_completed(futures, timeout=12):
-                try:
-                    t, data = future.result(timeout=5)
-                    result[t] = data
-                except Exception:
-                    pass
-        except FuturesTimeout:
-            pass  # Si tarda más de 12s en total, devolvemos lo que haya
+    # Pool persistente compartido (no se crea/destruye por llamada → sin churn
+    # de sesiones curl_cffi, que era la causa del SIGSEGV).
+    executor = _io_pool()
+    futures = {executor.submit(_fetch_one, t): t for t in peers[:3]}
+    try:
+        for future in as_completed(futures, timeout=12):
+            try:
+                t, data = future.result(timeout=5)
+                result[t] = data
+            except Exception:
+                pass
+    except FuturesTimeout:
+        pass  # Si tarda más de 12s en total, devolvemos lo que haya
 
     if result:
         _save_cache(cache_key, result)

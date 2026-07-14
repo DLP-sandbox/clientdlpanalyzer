@@ -4,6 +4,7 @@ Recibe todos los reportes de sub-agentes, los sintetiza y genera
 la decisión de inversión final con tesis, conviction y sizing.
 """
 import json
+import threading as _threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,6 +13,24 @@ from typing import Optional
 import anthropic
 
 from config.settings import ORCHESTRATOR_MODEL, MAX_TOKENS_ORCHESTRATOR, WEIGHTS, THRESHOLDS
+
+# Pool de hilos PERSISTENTE para correr los agentes en paralelo. Se crea una vez
+# y se reutiliza en cada análisis, en lugar de abrir/cerrar un ThreadPoolExecutor
+# por cada llamada. Así los hilos —y las sesiones curl_cffi thread-local que
+# crean— NO se destruyen tras cada análisis, eliminando el churn nativo que
+# provocaba el SIGSEGV (exit 139) aleatorio en Render. Es un pool distinto al de
+# IO de market_data, por lo que no hay riesgo de deadlock entre ambos.
+_AGENT_POOL = None
+_AGENT_POOL_LOCK = _threading.Lock()
+
+
+def _agent_pool():
+    global _AGENT_POOL
+    if _AGENT_POOL is None:
+        with _AGENT_POOL_LOCK:
+            if _AGENT_POOL is None:
+                _AGENT_POOL = ThreadPoolExecutor(max_workers=6, thread_name_prefix="dlp-agent")
+    return _AGENT_POOL
 from agents.base import AgentReport, BaseAgent, today_context, DLP_STYLE_REMINDER
 from agents.fundamentals import FundamentalsAgent
 from agents.technical import TechnicalAgent
@@ -212,37 +231,39 @@ class Orchestrator:
                     pros=[], cons=[], error=str(e)
                 )
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {
-                executor.submit(run_agent, name, agent): name
-                for name, agent in self.agents.items()
-            }
-            try:
-                for future in as_completed(futures, timeout=self._AGENT_TIMEOUT * 3):
-                    key = futures.get(future, "unknown")
-                    try:
-                        name, report = future.result(timeout=self._AGENT_TIMEOUT)
-                    except Exception:
-                        name = key
-                        if callback:
-                            callback(str(name), "Timeout — usando datos parciales")
-                        from agents.base import AgentReport
-                        report = AgentReport(
-                            agent_name=str(name), score=50,
-                            analysis="Tiempo de respuesta excedido.",
-                            pros=[], cons=[], error="timeout"
-                        )
-                    # CLAVE: indexar SIEMPRE por la clave del agente ("technical",
-                    # "fundamentals", "future"...), NO por report.agent_name (que es
-                    # el nombre en español y rompería reports.get("technical")).
-                    if isinstance(report, dict):
-                        reports.update(report)
-                    else:
-                        reports[name] = report
-            except Exception:
-                # as_completed superó el timeout global: devolvemos lo que haya
-                # llegado en vez de tumbar todo el análisis.
-                pass
+        # Pool PERSISTENTE (no se cierra) → los hilos y sus sesiones curl_cffi
+        # no se destruyen tras cada análisis (evita el SIGSEGV nativo aleatorio).
+        executor = _agent_pool()
+        futures = {
+            executor.submit(run_agent, name, agent): name
+            for name, agent in self.agents.items()
+        }
+        try:
+            for future in as_completed(futures, timeout=self._AGENT_TIMEOUT * 3):
+                key = futures.get(future, "unknown")
+                try:
+                    name, report = future.result(timeout=self._AGENT_TIMEOUT)
+                except Exception:
+                    name = key
+                    if callback:
+                        callback(str(name), "Timeout — usando datos parciales")
+                    from agents.base import AgentReport
+                    report = AgentReport(
+                        agent_name=str(name), score=50,
+                        analysis="Tiempo de respuesta excedido.",
+                        pros=[], cons=[], error="timeout"
+                    )
+                # CLAVE: indexar SIEMPRE por la clave del agente ("technical",
+                # "fundamentals", "future"...), NO por report.agent_name (que es
+                # el nombre en español y rompería reports.get("technical")).
+                if isinstance(report, dict):
+                    reports.update(report)
+                else:
+                    reports[name] = report
+        except Exception:
+            # as_completed superó el timeout global: devolvemos lo que haya
+            # llegado en vez de tumbar todo el análisis.
+            pass
 
         # Rellenar cualquier agente que no haya respondido para que el dashboard
         # nunca muestre "no disponible" por una clave faltante.
