@@ -60,9 +60,10 @@ st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
 # ── State inicial ─────────────────────────────────────────────────────────
 
 # Máximo de análisis mantenidos EN MEMORIA (RAM) a la vez. Acota el uso de
-# memoria sin importar cuántos análisis se hayan acumulado en disco: los más
-# antiguos siguen guardados en disco, simplemente no se cargan a RAM.
-MAX_HISTORY_IN_MEMORY = 10
+# memoria sin importar cuántos análisis se hayan acumulado.
+# Debe coincidir con MAX_ANALYSES_ON_DISK (persistence) para que la barra
+# lateral y el almacenamiento muestren lo mismo: los 5 más recientes.
+MAX_HISTORY_IN_MEMORY = 5
 
 
 def _prune_analyses_in_memory():
@@ -792,6 +793,15 @@ def run_analysis(ticker: str):
             disk_save(analysis)
         except Exception:
             pass
+        # Conservar solo los N análisis más recientes (borra los viejos de
+        # Supabase y disco). Evita que el historial crezca sin límite y acabe
+        # agotando la memoria del servicio. El recién guardado es el más nuevo,
+        # así que nunca se borra. Nunca rompe el flujo si falla.
+        try:
+            from data.persistence import prune_old_analyses
+            prune_old_analyses(MAX_HISTORY_IN_MEMORY)
+        except Exception:
+            pass
 
     st.rerun()
 
@@ -844,6 +854,14 @@ def run_market_scan(filters: Optional[dict] = None):
             scan_id = disk_save_scan(results)
             if scan_id:
                 st.session_state.current_scan_id = scan_id
+        except Exception:
+            pass
+        # Conservar solo los N escaneos más recientes. Cada escaneo pesa mucho
+        # (todas las acciones con sus resultados), así que acumularlos era una
+        # fuente grande de consumo de memoria. El recién guardado nunca se borra.
+        try:
+            from data.persistence import prune_old_scans
+            prune_old_scans()
         except Exception:
             pass
 

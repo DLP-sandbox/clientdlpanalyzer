@@ -214,6 +214,46 @@ def delete_analysis(ticker: str) -> None:
             pass
 
 
+# Cuántos análisis/escaneos se conservan. El historial crecía sin límite y cada
+# arranque de sesión cargaba TODO a memoria (~130 KB por análisis), lo que hacía
+# que el servicio excediera su límite de RAM cada pocos días.
+MAX_ANALYSES_ON_DISK = 5
+MAX_SCANS_ON_DISK = 3
+
+
+def prune_old_analyses(keep: int = MAX_ANALYSES_ON_DISK) -> int:
+    """Conserva solo los `keep` análisis más recientes y borra el resto
+    (Supabase + disco). Devuelve cuántos borró. NUNCA lanza excepción.
+
+    Es LIGERO a propósito: no carga los JSON completos para decidir. En Supabase
+    pide solo ticker+fecha; en local ordena por fecha de modificación del archivo.
+    Reutiliza delete_analysis(), que ya borra en ambos sitios."""
+    borrados = 0
+    try:
+        sb = _supabase_client()
+        if sb is not None:
+            rows = sb.table("user_analyses").select("ticker,updated_at").eq(
+                "uid", OWNER_UID).order("updated_at", desc=True).execute()
+            data = rows.data or []
+            for row in data[keep:]:
+                t = row.get("ticker")
+                if t:
+                    delete_analysis(t)
+                    borrados += 1
+            return borrados
+
+        # Fallback local: ordenar por fecha de modificación (sin abrir el JSON).
+        _ensure_dirs()
+        files = sorted(ANALYSES_DIR.glob("*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[keep:]:
+            delete_analysis(p.stem)   # p.stem = ticker
+            borrados += 1
+    except Exception as e:
+        _log_persistence_error("prune_old_analyses", e)
+    return borrados
+
+
 def load_all_analyses() -> dict:
     """Devuelve dict {ticker: StockAnalysis}. Lee de Supabase si está
     configurado; si no, del filesystem local."""
@@ -369,6 +409,38 @@ def save_scan(scan_results) -> Optional[str]:
         return None
 
 
+def _scan_meta_from_head(path) -> Optional[dict]:
+    """Lee SOLO la cabecera del archivo de scan para sacar los 4 metadatos.
+
+    El JSON se guarda con este orden: scan_id, timestamp, label, count y, al
+    final, `results` (que puede pesar cientos de KB). Antes se hacía
+    json.loads() del archivo COMPLETO solo para leer estos 4 campos — y esto se
+    ejecuta en CADA render de la barra lateral, así que era el mayor consumo de
+    memoria de la app. Aquí leemos unos pocos cientos de bytes y extraemos los
+    campos con regex. Si algo no cuadra devolvemos None y el llamador hace el
+    parseo completo como respaldo."""
+    try:
+        import re as _re
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            head = f.read(600)  # suficiente para los 4 campos, antes de results
+        def _grab(campo, numerico=False):
+            patron = rf'"{campo}"\s*:\s*' + (r'(\d+)' if numerico else r'"([^"]*)"')
+            m = _re.search(patron, head)
+            return (int(m.group(1)) if numerico else m.group(1)) if m else None
+        scan_id = _grab("scan_id")
+        timestamp = _grab("timestamp")
+        if not scan_id or not timestamp:
+            return None
+        return {
+            "scan_id":   scan_id,
+            "timestamp": timestamp,
+            "label":     _grab("label") or "",
+            "count":     _grab("count", numerico=True) or 0,
+        }
+    except Exception:
+        return None
+
+
 def load_all_scans_meta() -> list[dict]:
     """Metadata de todos los scans (sin cargar results), ordenados desc por fecha."""
     metas = []
@@ -376,16 +448,17 @@ def load_all_scans_meta() -> list[dict]:
     sb = _supabase_client()
     if sb is not None:
         try:
+            # OJO: NO pedimos la columna `data` (el scan completo con todos los
+            # resultados). Solo los metadatos → payload mínimo en cada render.
             rows = sb.table("user_scans").select(
-                "scan_id,label,count,data,created_at").eq(
+                "scan_id,label,count,created_at").eq(
                 "uid", OWNER_UID).order("created_at", desc=True).execute()
             for row in (rows.data or []):
-                d = row.get("data") or {}
                 metas.append({
-                    "scan_id":   row.get("scan_id") or d.get("scan_id"),
-                    "timestamp": d.get("timestamp") or row.get("created_at"),
-                    "label":     row.get("label") or d.get("label"),
-                    "count":     row.get("count") or d.get("count", 0),
+                    "scan_id":   row.get("scan_id"),
+                    "timestamp": row.get("created_at"),
+                    "label":     row.get("label") or "",
+                    "count":     row.get("count") or 0,
                 })
             return metas
         except Exception as e:
@@ -393,16 +466,20 @@ def load_all_scans_meta() -> list[dict]:
 
     _ensure_dirs()
     for path in SCANS_DIR.glob("scan_*.json"):
-        try:
-            data = json.loads(path.read_text())
-            metas.append({
-                "scan_id":   data.get("scan_id"),
-                "timestamp": data.get("timestamp"),
-                "label":     data.get("label"),
-                "count":     data.get("count", 0),
-            })
-        except Exception:
-            continue
+        meta = _scan_meta_from_head(path)
+        if meta is None:
+            # Respaldo: parseo completo (solo si la cabecera no fue legible).
+            try:
+                data = json.loads(path.read_text())
+                meta = {
+                    "scan_id":   data.get("scan_id"),
+                    "timestamp": data.get("timestamp"),
+                    "label":     data.get("label"),
+                    "count":     data.get("count", 0),
+                }
+            except Exception:
+                continue
+        metas.append(meta)
     metas.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return metas
 
@@ -485,3 +562,36 @@ def delete_scan(scan_id: str) -> None:
             path.unlink()
         except Exception:
             pass
+
+
+def prune_old_scans(keep: int = MAX_SCANS_ON_DISK) -> int:
+    """Conserva solo los `keep` escaneos más recientes y borra el resto
+    (Supabase + disco). Devuelve cuántos borró. NUNCA lanza excepción.
+
+    Ligero: en Supabase pide solo scan_id+fecha (NO la columna `data`, que es la
+    pesada); en local ordena por nombre de archivo, que ya lleva la fecha
+    (scan_YYYYMMDD_HHMMSS.json). Reutiliza delete_scan()."""
+    borrados = 0
+    try:
+        sb = _supabase_client()
+        if sb is not None:
+            rows = sb.table("user_scans").select("scan_id,created_at").eq(
+                "uid", OWNER_UID).order("created_at", desc=True).execute()
+            data = rows.data or []
+            for row in data[keep:]:
+                sid = row.get("scan_id")
+                if sid:
+                    delete_scan(sid)
+                    borrados += 1
+            return borrados
+
+        # Fallback local: el nombre scan_YYYYMMDD_HHMMSS.json ya ordena por fecha.
+        _ensure_dirs()
+        files = sorted(SCANS_DIR.glob("scan_*.json"),
+                       key=lambda p: p.name, reverse=True)
+        for p in files[keep:]:
+            delete_scan(p.stem.replace("scan_", "", 1))
+            borrados += 1
+    except Exception as e:
+        _log_persistence_error("prune_old_scans", e)
+    return borrados
