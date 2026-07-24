@@ -666,6 +666,7 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 .st-key-chart_mode_pro,
 .st-key-chart_mode_basico {
     max-width: 190px;
+    min-width: 132px;            /* nunca tan estrecho como para partir la palabra */
     margin: 0 auto 4px;          /* ← centra el botón dentro de su columna */
 }
 
@@ -686,13 +687,32 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     font-size: 0.84rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.06em !important;
-    padding: 10px 18px !important;
+    padding: 10px 14px !important;
     border-radius: 10px !important;
     box-shadow: var(--shadow-1), inset 0 1px 0 rgba(255,255,255,0.03);
+    /* La etiqueta va SIEMPRE en una sola línea. En un iframe estrecho (Whop)
+       la columna se comprime y, sin esto, Streamlit parte "Básico" en
+       "Bá / sic / o" apilado en vertical. */
+    white-space: nowrap !important;
+    min-width: fit-content !important;
+    overflow: visible !important;
     transition: color var(--dur-1) var(--ease-out),
                 background var(--dur-1) var(--ease-out),
                 border-color var(--dur-1) var(--ease-out),
                 transform var(--dur-1) var(--ease-out);
+}
+
+/* Streamlit envuelve la etiqueta en varios contenedores anidados; hay que
+   desactivar el corte de palabra en todos ellos, no solo en el <button>. */
+.stApp .st-key-chart_mode_pro button *,
+.stApp .st-key-chart_mode_basico button * {
+    white-space: nowrap !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    hyphens: none !important;
+    max-width: none !important;
 }
 
 .stApp .st-key-chart_mode_pro button:hover,
@@ -745,6 +765,27 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 /* Básico → línea ascendente con degradado, solo verde (mini mountain) */
 .stApp .st-key-chart_mode_basico button::before {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 19'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%233DD68C' stop-opacity='0.5'/%3E%3Cstop offset='1' stop-color='%233DD68C' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M1.5 15 L7 11 L11.5 13 L16.5 7 L21 8.5 L26.5 2.5 L26.5 18 L1.5 18 Z' fill='url(%23g)'/%3E%3Cpath d='M1.5 15 L7 11 L11.5 13 L16.5 7 L21 8.5 L26.5 2.5' fill='none' stroke='%233DD68C' stroke-width='1.7' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+/* Pantallas / iframes muy estrechos: se recorta el icono y el espaciado antes
+   que la palabra. El texto nunca se parte — se prefiere un botón más justo. */
+@media (max-width: 640px) {
+    .st-key-chart_mode_pro,
+    .st-key-chart_mode_basico {
+        min-width: 108px;
+    }
+    .stApp .st-key-chart_mode_pro button,
+    .stApp .st-key-chart_mode_basico button {
+        padding: 9px 10px !important;
+        gap: 7px;
+        font-size: 0.78rem !important;
+        letter-spacing: 0.03em !important;
+    }
+    .stApp .st-key-chart_mode_pro button::before,
+    .stApp .st-key-chart_mode_basico button::before {
+        width: 22px;
+        height: 15px;
+    }
 }
 
 /* ── Score Badges: chips con punto de estado, sin degradados ─────────── */

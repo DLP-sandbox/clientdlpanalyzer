@@ -1548,9 +1548,11 @@ def render_technical(analysis: StockAnalysis):
     </div>
     """, unsafe_allow_html=True)
 
-    # [2,1,1,2] deja las dos columnas centrales justo en el centro de la
-    # página, y el CSS centra cada botón dentro de la suya.
-    _ms_l, ms_pro, ms_bas, _ms_r = st.columns([2, 1, 1, 2], gap="small")
+    # [1,2,2,1] deja las dos columnas centrales justo en el centro de la
+    # página, y el CSS centra cada botón dentro de la suya. Se les da 1/3 del
+    # ancho (no 1/6) para que en un iframe estrecho el botón siga teniendo
+    # sitio de sobra y la etiqueta nunca se parta.
+    _ms_l, ms_pro, ms_bas, _ms_r = st.columns([1, 2, 2, 1], gap="small")
     with ms_pro:
         if st.button("Pro", key="chart_mode_pro", use_container_width=True,
                      type="primary" if mode == PRO else "secondary"):
