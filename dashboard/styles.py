@@ -836,43 +836,30 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     background: rgba(var(--neg-rgb),0.06);
 }
 
-/* ── Tabs — subrayado clásico + línea divisoria, brillo y separadores ────
-   Se mantiene la línea inferior que separa la fila de pestañas del contenido
-   (distinción clara). Cada palabra lleva un leve brillo detrás; entre pestañas
-   hay un separador vertical que baja hasta esa línea, dando profundidad y
-   distinción clara entre una pestaña y otra. */
-/* El wrapper externo: si es flex, centra al tab-list (inocuo si no lo es). */
+/* ── Tabs — reconstrucción limpia y robusta ─────────────────────────────
+   Se estila SOLO lo visual y se respeta el layout flex de Streamlit. Los
+   separadores usan border-right (SIEMPRE renderiza; los ::after no lo hacían
+   en el DOM real). Padding amplio para que no se vean apretados; gap:0 con el
+   border-right hace de divisor limpio que baja hasta la línea inferior. */
 [data-testid="stTabs"] > div:first-child {
     justify-content: center !important;
     background: transparent !important;
 }
-/* ⚠️ El contenedor FLEX real que sostiene los botones es
-   [data-baseweb="tab-list"], NO "> div:first-child" (ese es un wrapper).
-   Aquí van justify-content (centra el menú), gap:0 (separadores equidistantes)
-   y la línea divisoria inferior. */
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [role="tablist"] {
     display: flex !important;
-    /* "safe center": centra cuando las pestañas caben; si NO caben, se alinea
-       al inicio y se puede hacer scroll (en vez de recortar el principio). */
-    justify-content: safe center !important;                  /* menú centrado en la app */
-    gap: 0 !important;                                        /* sin gap → separadores equidistantes */
+    justify-content: safe center !important;   /* menú centrado; si no caben, scroll desde el inicio */
     flex-wrap: nowrap !important;
-    /* Cuando las 9 pestañas no caben (iframe estrecho), la fila hace scroll
-       horizontal en lugar de aplastar los botones. */
     overflow-x: auto !important;
-    overflow-y: visible !important;
     scrollbar-width: thin !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    border-bottom: 1px solid var(--hairline-2) !important;    /* línea divisoria clara */
+    gap: 0 !important;
+    border-bottom: 1px solid var(--hairline-2) !important;   /* línea divisoria clara */
     background: transparent !important;
 }
-/* Sea el <button> o un wrapper el hijo flex directo, NINGUNO se encoge. */
+/* Cada pestaña mide según su contenido y NO se encoge (baseweb pone flex:1 1 0). */
 [data-testid="stTabs"] [data-baseweb="tab-list"] > *,
 [data-testid="stTabs"] [role="tablist"] > * {
     flex: 0 0 auto !important;
-    min-width: max-content !important;
 }
 
 button[data-baseweb="tab"] {
@@ -882,76 +869,40 @@ button[data-baseweb="tab"] {
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    /* Padding simétrico + margin 0: sin margen entre pestañas los dos
-       separadores (izq = ::after del vecino, der = ::after propio) quedan a la
-       MISMA distancia del texto. */
-    padding: 10px 20px !important;
-    margin: 0 !important;
-    /* ⚠️ baseweb pone inline `flex: 1 1 0` en cada tab → se encogían para
-       repartirse el ancho y quedaban APLASTADOS. El shorthand `flex: 0 0 auto`
-       (grow 0, shrink 0, basis auto) sobrescribe TAMBIÉN el flex-basis:0 de
-       baseweb; así cada botón mide según su contenido y no se comprime.
-       (flex-shrink:0 solo no basta: dejaba el basis 0 de baseweb.) */
+    padding: 10px 22px !important;
     flex: 0 0 auto !important;
-    width: auto !important;
-    min-width: max-content !important;
     white-space: nowrap !important;
-    justify-content: center !important;
-    text-align: center !important;
     border-radius: 0 !important;
+    /* Separador vertical entre pestañas: border-right que baja hasta la línea
+       inferior. Robusto (box model), a diferencia de ::after. */
+    border-right: 1px solid var(--hairline) !important;
     border-bottom: 2px solid transparent !important;
     background: transparent !important;
-    position: relative !important;
-    /* Brillo leve DETRÁS de la palabra */
-    text-shadow: 0 0 10px rgba(255,255,255,0.10) !important;
+    text-shadow: 0 0 10px rgba(255,255,255,0.08) !important;   /* brillo leve tras la palabra */
     transition: color var(--dur-2) var(--ease-out),
-                border-color var(--dur-2) var(--ease-out),
-                text-shadow var(--dur-2) var(--ease-out) !important;
+                background var(--dur-2) var(--ease-out),
+                border-bottom-color var(--dur-2) var(--ease-out) !important;
 }
+button[data-baseweb="tab"]:last-child { border-right: none !important; }
 
-/* El párrafo interno del label no debe aportar márgenes laterales. */
-button[data-baseweb="tab"] [data-testid="stMarkdownContainer"],
-button[data-baseweb="tab"] p {
-    margin: 0 !important;
-}
-
-/* Separador vertical entre pestañas — evidente, uniforme y con glow dorado.
-   Es una línea vertical fina con presencia de oro en TODA su altura (más suave
-   arriba, más viva al conectar con la línea de abajo) y un halo dorado
-   simétrico y centrado — el mismo brillo del resto de la app. Sin biselado
-   asimétrico para que NO se vea torcido. */
-button[data-baseweb="tab"]:not(:last-child)::after {
-    content: "";
-    position: absolute;
-    right: -1px;
-    top: 20%;
-    bottom: 0;
-    width: 2px;
-    background: linear-gradient(180deg,
-        rgba(var(--accent-rgb),0.18) 0%,
-        rgba(var(--accent-rgb),0.38) 55%,
-        rgba(var(--accent-rgb),0.60) 100%);
-    box-shadow: 0 0 7px rgba(var(--accent-rgb),0.38);   /* halo uniforme y centrado */
-    border-radius: 2px;
-    pointer-events: none;
-}
+/* El párrafo interno del label no aporta márgenes. */
+button[data-baseweb="tab"] p,
+button[data-baseweb="tab"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
 
 button[data-baseweb="tab"]:hover {
     color: var(--text-hi) !important;
-    text-shadow: 0 0 14px rgba(var(--accent-rgb),0.28) !important;
-    background: transparent !important;
+    background: rgba(var(--accent-rgb),0.05) !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
     color: var(--accent-hi) !important;
     font-weight: 600 !important;
     border-bottom-color: var(--accent) !important;
-    /* Brillo dorado más marcado detrás de la palabra activa */
-    text-shadow: 0 0 16px rgba(var(--accent-rgb),0.45) !important;
-    background: transparent !important;
+    background: rgba(var(--accent-rgb),0.08) !important;
+    text-shadow: 0 0 14px rgba(var(--accent-rgb),0.40) !important;   /* brillo dorado en la activa */
 }
 
-/* Barra deslizante nativa (indicador activo) + línea base de la fila */
+/* Indicador nativo deslizante + línea base de la fila */
 [data-baseweb="tab-highlight"] { background-color: var(--accent) !important; height: 2px !important; }
 [data-baseweb="tab-border"]    { background-color: var(--hairline-2) !important; }
 
