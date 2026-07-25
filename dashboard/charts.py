@@ -22,6 +22,11 @@ PURPLE   = "#9D8CE0"                     # dato categórico
 YELLOW   = "#F0C878"                     # --accent-hi
 WHITE    = "#F2F3F5"                     # --text-hi
 
+# Radio de las esquinas de TODAS las barras. Porcentual (no px) para que se vea
+# igual de redondeado sea cual sea el grosor de la barra: un valor fijo en px se
+# volvía invisible en barras altas y exagerado en barras finas.
+BAR_RADIUS = "30%"
+
 PLOTLY_LAYOUT = dict(
     paper_bgcolor=BG_MAIN,
     plot_bgcolor=BG_MAIN,
@@ -86,7 +91,10 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
     fig = make_subplots(
         rows=4, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.02,
+        # Espaciado mayor entre subgráficas para que los títulos (Volumen /
+        # RSI 14 / MACD) tengan su propio hueco y NO se solapen con la gráfica
+        # de arriba. Con 0.02 el "RSI 14" caía encima del volumen.
+        vertical_spacing=0.05,
         row_heights=[0.55, 0.15, 0.15, 0.15],
         subplot_titles=["", "Volumen", "RSI 14", "MACD"],
     )
@@ -206,6 +214,7 @@ def build_price_chart(df_daily: pd.DataFrame, indicators: dict, ticker: str) -> 
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
         height=700,
         hovermode="x unified",
+        dragmode=False,   # sin arrastre/zoom por arrastre; el hover se conserva
         xaxis_rangeslider_visible=False,
         legend=dict(
             orientation="h",
@@ -239,6 +248,25 @@ def _hex_rgb(hex_color: str) -> str:
     """'#3DD68C' → '61,214,140' (para componer rgba() en Plotly)."""
     h = hex_color.lstrip("#")
     return ",".join(str(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+
+
+def _score_color(s) -> str:
+    """Color de un puntaje 0-100 en la MISMA escala del termómetro
+    (rojo→ámbar→verde, de peor a mejor). Fuente única de verdad para todas
+    las barras que representan una calificación."""
+    try:
+        s = float(s)
+    except (TypeError, ValueError):
+        return MUTED
+    if s >= 80:
+        return "#3DD68C"   # --pos
+    if s >= 65:
+        return "#63DFA3"
+    if s >= 50:
+        return "#E2B25C"   # --accent
+    if s >= 35:
+        return "#E0854E"
+    return "#F1495F"       # --neg
 
 
 def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560) -> go.Figure:
@@ -332,6 +360,7 @@ def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560)
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
         height=height,
         hovermode="x unified",
+        dragmode=False,   # sin arrastre/zoom; el hover se conserva
         showlegend=False,
         margin=dict(l=10, r=10, t=30, b=10),
         hoverlabel=dict(bgcolor="rgba(16,18,22,0.95)", bordercolor=f"rgba({rgb},0.35)",
@@ -378,19 +407,27 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
                 "tickfont": {"color": MUTED, "size": 9},
                 "dtick": 20,
             },
-            "bar": {"color": color, "thickness": 0.3},
+            # Barra de la calificación (fill hasta el score): fina y centrada en
+            # el anillo, para que las zonas de color asomen por los bordes.
+            "bar": {"color": color, "thickness": 0.34},
             "bgcolor": BG_CARD,
-            "borderwidth": 1,
-            "bordercolor": GRID,
+            "borderwidth": 0,
+            # Fondo tipo termómetro (igual criterio que el gauge de Sentimiento):
+            # rojo = calificación baja, ámbar = intermedia, verde = alta. Las
+            # zonas rellenan el anillo y quedan como bandas de color en los
+            # bordes (interior y exterior) alrededor de la barra central.
             "steps": [
-                {"range": [0, 50],  "color": "#160B0D"},
-                {"range": [50, 65], "color": "#15120A"},
-                {"range": [65, 80], "color": "#0A1A10"},
-                {"range": [80, 100],"color": "#0A1A0A"},
+                {"range": [0, 40],   "color": "rgba(241,73,95,0.22)"},    # rojo
+                {"range": [40, 55],  "color": "rgba(224,133,78,0.16)"},   # naranja
+                {"range": [55, 70],  "color": "rgba(226,178,92,0.14)"},   # ámbar
+                {"range": [70, 85],  "color": "rgba(99,223,163,0.15)"},   # verde claro
+                {"range": [85, 100], "color": "rgba(61,214,140,0.22)"},   # verde
             ],
+            # Marca fina en el score exacto, discreta (mismo espíritu limpio del
+            # gauge de sentimiento pero conservando la referencia del valor).
             "threshold": {
                 "line": {"color": WHITE, "width": 2},
-                "thickness": 0.75,
+                "thickness": 0.9,
                 "value": score,
             },
         },
@@ -412,7 +449,10 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
         plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
         height=320,
-        margin=dict(l=20, r=20, t=55, b=20),
+        # Mismo criterio que el gauge de sentimiento: margen asimétrico (más a
+        # la derecha) para alinearlo hacia la izquierda de su tarjeta, sin
+        # cortar los ticks "0" ni "100".
+        margin=dict(l=30, r=95, t=55, b=20),
     )
 
     return fig
@@ -519,15 +559,19 @@ def build_snowflake(snowflake: dict) -> go.Figure:
 def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     """Desglose horizontal premium: barras con gradiente, zonas de calidad, sin tonterías."""
 
+    # Prefijo = el MISMO código de sección que su pestaña (FN, TC, FU…), en oro,
+    # en lugar de un emoji. Refleja el badge que aparece dentro de cada sección.
+    def _lbl(code, name):
+        return f"<span style='color:#E2B25C'><b>{code}</b></span>  {name}"
     agent_display = {
-        "fundamentals":  "📊  Fundamentales",
-        "technical":     "📈  Técnico",
-        "future":        "🔭  Futuro",
-        "institutional": "🏦  Smart Money",
-        "catalysts":     "⚡  Catalizadores",
-        "macro":         "🌍  Macro",
-        "sentiment":     "📰  Sentimiento",
-        "risk":          "⚖️  Riesgo",
+        "fundamentals":  _lbl("FN", "Fundamentales"),
+        "technical":     _lbl("TC", "Técnico"),
+        "future":        _lbl("FU", "Futuro"),
+        "institutional": _lbl("SM", "Smart Money"),
+        "catalysts":     _lbl("CT", "Catalizadores"),
+        "macro":         _lbl("MC", "Macro"),
+        "sentiment":     _lbl("SN", "Sentimiento"),
+        "risk":          _lbl("RS", "Riesgo"),
     }
     order = ["fundamentals", "technical", "future", "institutional",
              "catalysts", "macro", "sentiment", "risk"]
@@ -535,14 +579,7 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     names  = [agent_display[k] for k in order]
     scores = [float(score_breakdown.get(k, 50)) for k in order]
 
-    def color_for(s):
-        if s >= 80: return "#3DD68C"
-        if s >= 65: return "#63DFA3"
-        if s >= 50: return "#E2B25C"
-        if s >= 35: return "#E0854E"
-        return "#F1495F"
-
-    bar_colors = [color_for(s) for s in scores]
+    bar_colors = [_score_color(s) for s in scores]
 
     fig = go.Figure()
 
@@ -557,7 +594,7 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
         y=names,
         x=[100] * len(names),
         orientation="h",
-        marker=dict(color="rgba(21,24,29,0.4)", line=dict(width=0)),
+        marker=dict(color="rgba(21,24,29,0.4)", line=dict(width=0), cornerradius=BAR_RADIUS),
         showlegend=False,
         hoverinfo="skip",
         width=0.55,
@@ -570,8 +607,9 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
         orientation="h",
         marker=dict(
             color=bar_colors,
-            line=dict(width=0),
+            line=dict(color="rgba(255,255,255,0.10)", width=1),
             opacity=0.92,
+            cornerradius=BAR_RADIUS,
         ),
         text=[f"<b>{s:.0f}</b>" for s in scores],
         textposition="outside",
@@ -780,35 +818,61 @@ def build_rsi_gauge(rsi: float, height: int = 200) -> go.Figure:
 
 
 def build_metric_bars(items: list, height: int = 220, title: str = "",
-                      x_format: str = "%", x_zero_line: bool = True) -> go.Figure:
+                      x_format: str = "%", x_zero_line: bool = True,
+                      color_by_score: bool = False) -> go.Figure:
     """Bar chart horizontal genérico para métricas comparativas.
-    items = [(label, value, color)]"""
+    items = [(label, value, color)]
+
+    color_by_score=True → ignora el color de cada item y lo pinta según la
+    escala del termómetro (rojo→verde, 0-100), para las barras que representan
+    una CALIFICACIÓN (sub-scores). Además dibuja un riel de fondo 0→100 para
+    que se lea como una barra de progreso.
+    """
     if not items:
         return go.Figure()
 
     labels = [i[0] for i in items]
     values = [i[1] if isinstance(i[1], (int, float)) else 0 for i in items]
-    colors = [i[2] for i in items]
+    colors = [_score_color(v) for v in values] if color_by_score else [i[2] for i in items]
 
-    text_format = "%{x:+.2f}%" if x_format == "%" else "%{x:.2f}"
     text_vals = [
-        (f"{v:+.2f}%" if x_format == "%" else f"{v:.2f}") if isinstance(v, (int, float)) else "—"
+        (f"{v:+.2f}%" if x_format == "%" else f"{v:.0f}" if color_by_score
+         else f"{v:.2f}") if isinstance(v, (int, float)) else "—"
         for v in values
     ]
 
-    fig = go.Figure(go.Bar(
-        y=labels,
-        x=values,
-        orientation="h",
-        marker_color=colors,
-        marker_opacity=0.85,
-        text=text_vals,
-        textposition="outside",
+    # Grosor de barra: algo más finas cuando hay riel, para que se vea el track.
+    bar_w = 0.62 if color_by_score else 0.7
+    fig = go.Figure()
+
+    # Riel de fondo (solo en modo calificación): 0→100 tenue, redondeado.
+    if color_by_score:
+        fig.add_trace(go.Bar(
+            y=labels, x=[100] * len(labels), orientation="h",
+            marker=dict(color="rgba(255,255,255,0.035)",
+                        cornerradius=BAR_RADIUS, line=dict(width=0)),
+            width=bar_w, showlegend=False, hoverinfo="skip",
+        ))
+
+    fig.add_trace(go.Bar(
+        y=labels, x=values, orientation="h",
+        marker=dict(color=colors, opacity=0.92, cornerradius=BAR_RADIUS,
+                    line=dict(color="rgba(255,255,255,0.10)", width=1)),
+        text=text_vals, textposition="outside",
         textfont=dict(size=10, color=TEXT, family="JetBrains Mono"),
+        width=bar_w, showlegend=False,
+        hovertemplate="<b>%{y}</b><br>%{x:.0f}<extra></extra>" if color_by_score else None,
     ))
 
-    if x_zero_line:
+    if x_zero_line and not color_by_score:
         fig.add_vline(x=0, line_color=MUTED, line_width=1, opacity=0.5)
+
+    xaxis = dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=MUTED,
+                 ticksuffix=("%" if x_format == "%" else ""))
+    if color_by_score:
+        # Escala fija 0-105 para que el riel completo y las etiquetas quepan.
+        xaxis.update(range=[0, 108], gridcolor="rgba(0,0,0,0)", zeroline=False,
+                     tickvals=[0, 25, 50, 65, 80, 100])
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
@@ -816,11 +880,13 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         font=dict(color=TEXT, family="Inter", size=11),
         height=height,
         showlegend=False,
+        barmode="overlay",
         margin=dict(l=10, r=60, t=40 if title else 10, b=10),
         title=dict(text=f"<b>{title}</b>", font=dict(color=MUTED, size=11), x=0) if title else None,
-        xaxis=dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=MUTED,
-                   ticksuffix=("%" if x_format == "%" else "")),
+        xaxis=xaxis,
         yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(color=TEXT, size=10), zerolinecolor=GRID),
+        hoverlabel=dict(bgcolor="#15181D", bordercolor="rgba(226,178,92,0.3)",
+                        font=dict(size=11, family="JetBrains Mono", color=TEXT)),
     )
     return fig
 
@@ -838,14 +904,26 @@ def build_earnings_history_chart(history: list, height: int = 250) -> go.Figure:
     fig = go.Figure(go.Bar(
         x=dates,
         y=surprises,
-        marker_color=colors,
-        marker_opacity=0.85,
+        # Radio pequeño FIJO (no porcentual): en barras verticales cortas el 30%
+        # se ve exagerado. 7px = redondeo sutil, como antes.
+        marker=dict(color=colors, opacity=0.9, cornerradius=7,
+                    line=dict(color="rgba(255,255,255,0.10)", width=1)),
         text=[f"{s:+.1f}%" for s in surprises],
         textposition="outside",
         textfont=dict(size=10, color=TEXT, family="JetBrains Mono"),
+        # cliponaxis=False: la etiqueta de una barra muy alta (p.ej. +2000%) no
+        # se recorta contra el borde del eje; se dibuja completa en el margen.
+        cliponaxis=False,
     ))
 
     fig.add_hline(y=0, line_color=MUTED, line_width=1, opacity=0.6)
+
+    # Rango del eje Y con espacio (headroom) para que la etiqueta "outside"
+    # SIEMPRE quepa: extra arriba para barras positivas y abajo para negativas.
+    _vmax = max(surprises + [0.0])
+    _vmin = min(surprises + [0.0])
+    _span = (_vmax - _vmin) or (abs(_vmax) or 1.0)
+    y_range = [_vmin - _span * 0.14, _vmax + _span * 0.22]
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
@@ -853,11 +931,13 @@ def build_earnings_history_chart(history: list, height: int = 250) -> go.Figure:
         font=dict(color=TEXT, family="JetBrains Mono", size=10),
         height=height,
         showlegend=False,
-        margin=dict(l=10, r=10, t=40, b=20),
+        # Margen superior amplio: aloja la etiqueta de la barra más alta que,
+        # con cliponaxis=False, se dibuja por encima del área de trazado.
+        margin=dict(l=10, r=10, t=52, b=24),
         title=dict(text="<b>HISTORIAL EARNINGS SURPRISES</b>", font=dict(color=MUTED, size=11), x=0),
         xaxis=dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=GRID),
         yaxis=dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=GRID,
-                   ticksuffix="%"),
+                   ticksuffix="%", range=y_range),
     )
     return fig
 
@@ -878,7 +958,10 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
     fig = go.Figure(go.Indicator(
         mode="gauge",
         value=score,
-        domain={"x": [0, 1], "y": [0.32, 1.0]},
+        # Dominio completo (centrado garantizado) + margen amplio l/r para que
+        # los ticks "0" y "100" no toquen los bordes. Así queda centrado en la
+        # tarjeta y lo más grande posible sin cortarse.
+        domain={"x": [0, 1], "y": [0.28, 1.0]},
         title={"text": f"<b>SENTIMIENTO</b><br><span style='font-size:0.75em;color:{color}'>{label}</span>",
                "font": {"size": 12, "color": MUTED}},
         gauge={
@@ -898,18 +981,20 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
     ))
     # Número GRANDE como annotation separada — nunca se solapa con el arco
     fig.add_annotation(
-        x=0.5, y=0.12,
+        x=0.5, y=0.10,
         xref="paper", yref="paper",
         text=f"<b>{score:.0f}</b><span style='font-size:0.5em;color:{MUTED}'>/100</span>",
         showarrow=False,
-        font=dict(size=36, color=color, family="JetBrains Mono"),
+        font=dict(size=34, color=color, family="JetBrains Mono"),
         align="center",
     )
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
         height=height + 60,
-        margin=dict(l=20, r=20, t=55, b=20),
+        # Margen asimétrico (más a la derecha) empuja el gauge hacia la
+        # IZQUIERDA dentro de su tarjeta, sin cortar el tick "0".
+        margin=dict(l=24, r=72, t=55, b=20),
     )
     return fig
 
@@ -933,14 +1018,25 @@ def build_holders_bars(holders: list, height: int = 260) -> go.Figure:
     items.sort(key=lambda x: x[1], reverse=True)
     items = items[:8]
 
-    fig = go.Figure(go.Bar(
-        y=[i[0] for i in items],
-        x=[i[1] for i in items],
-        orientation="h",
-        marker=dict(color=BLUE, opacity=0.8),
-        text=[f"{i[1]:.2f}%" for i in items],
+    names = [i[0] for i in items]
+    vals  = [i[1] for i in items]
+    track_max = (max(vals) * 1.15) if vals else 1
+
+    fig = go.Figure()
+    # Riel de fondo tenue para dar profundidad (mismo idioma que las demás)
+    fig.add_trace(go.Bar(
+        y=names, x=[track_max] * len(names), orientation="h",
+        marker=dict(color="rgba(255,255,255,0.03)", cornerradius=BAR_RADIUS, line=dict(width=0)),
+        width=0.68, showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_trace(go.Bar(
+        y=names, x=vals, orientation="h",
+        marker=dict(color=BLUE, opacity=0.85, cornerradius=BAR_RADIUS,
+                    line=dict(color="rgba(255,255,255,0.10)", width=1)),
+        text=[f"{v:.2f}%" for v in vals],
         textposition="outside",
         textfont=dict(size=10, color=TEXT, family="JetBrains Mono"),
+        width=0.68, showlegend=False,
     ))
 
     fig.update_layout(
@@ -949,9 +1045,11 @@ def build_holders_bars(holders: list, height: int = 260) -> go.Figure:
         font=dict(color=TEXT, family="Inter", size=10),
         height=height,
         showlegend=False,
+        barmode="overlay",
         margin=dict(l=10, r=40, t=40, b=10),
         title=dict(text="<b>TOP 8 INSTITUCIONALES (% outstanding)</b>", font=dict(color=MUTED, size=11), x=0),
-        xaxis=dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), ticksuffix="%", zerolinecolor=MUTED),
+        xaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(color=MUTED, size=9), ticksuffix="%",
+                   zeroline=False, range=[0, track_max]),
         yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(color=TEXT, size=9),
                    autorange="reversed", zerolinecolor=GRID),
     )

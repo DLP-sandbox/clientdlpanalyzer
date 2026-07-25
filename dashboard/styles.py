@@ -836,11 +836,29 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     background: rgba(var(--neg-rgb),0.06);
 }
 
-/* ── Tabs ────────────────────────────────────────────────────────────── */
+/* ── Tabs — subrayado clásico + línea divisoria, brillo y separadores ────
+   Se mantiene la línea inferior que separa la fila de pestañas del contenido
+   (distinción clara). Cada palabra lleva un leve brillo detrás; entre pestañas
+   hay un separador vertical que baja hasta esa línea, dando profundidad y
+   distinción clara entre una pestaña y otra. */
+/* El wrapper externo: si es flex, centra al tab-list (inocuo si no lo es). */
 [data-testid="stTabs"] > div:first-child {
-    border-bottom: 1px solid var(--hairline) !important;
+    justify-content: center !important;
     background: transparent !important;
-    gap: 4px !important;
+}
+/* ⚠️ El contenedor FLEX real que sostiene los botones es
+   [data-baseweb="tab-list"], NO "> div:first-child" (ese es un wrapper).
+   Aquí van justify-content (centra el menú), gap:0 (separadores equidistantes)
+   y la línea divisoria inferior. */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"] {
+    display: flex !important;
+    justify-content: center !important;                       /* menú centrado en la app */
+    gap: 0 !important;                                        /* sin gap → separadores equidistantes */
+    margin-left: auto !important;
+    margin-right: auto !important;
+    border-bottom: 1px solid var(--hairline-2) !important;    /* línea divisoria clara */
+    background: transparent !important;
 }
 
 button[data-baseweb="tab"] {
@@ -850,29 +868,69 @@ button[data-baseweb="tab"] {
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    padding: 10px 14px !important;
-    border-bottom: 2px solid transparent !important;
-    transition: color var(--dur-2) var(--ease-out),
-                border-color var(--dur-2) var(--ease-out) !important;
+    /* Padding simétrico + margin 0: sin margen entre pestañas los dos
+       separadores (izq = ::after del vecino, der = ::after propio) quedan a la
+       MISMA distancia del texto. */
+    padding: 10px 20px !important;
+    margin: 0 !important;
+    justify-content: center !important;
+    text-align: center !important;
     border-radius: 0 !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    position: relative !important;
+    /* Brillo leve DETRÁS de la palabra */
+    text-shadow: 0 0 10px rgba(255,255,255,0.10) !important;
+    transition: color var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                text-shadow var(--dur-2) var(--ease-out) !important;
+}
+
+/* El párrafo interno del label no debe aportar márgenes laterales. */
+button[data-baseweb="tab"] [data-testid="stMarkdownContainer"],
+button[data-baseweb="tab"] p {
+    margin: 0 !important;
+}
+
+/* Separador vertical entre pestañas — evidente, uniforme y con glow dorado.
+   Es una línea vertical fina con presencia de oro en TODA su altura (más suave
+   arriba, más viva al conectar con la línea de abajo) y un halo dorado
+   simétrico y centrado — el mismo brillo del resto de la app. Sin biselado
+   asimétrico para que NO se vea torcido. */
+button[data-baseweb="tab"]:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: 20%;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg,
+        rgba(var(--accent-rgb),0.18) 0%,
+        rgba(var(--accent-rgb),0.38) 55%,
+        rgba(var(--accent-rgb),0.60) 100%);
+    box-shadow: 0 0 7px rgba(var(--accent-rgb),0.38);   /* halo uniforme y centrado */
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+button[data-baseweb="tab"]:hover {
+    color: var(--text-hi) !important;
+    text-shadow: 0 0 14px rgba(var(--accent-rgb),0.28) !important;
     background: transparent !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
-    color: var(--text-hi) !important;
+    color: var(--accent-hi) !important;
     font-weight: 600 !important;
     border-bottom-color: var(--accent) !important;
+    /* Brillo dorado más marcado detrás de la palabra activa */
+    text-shadow: 0 0 16px rgba(var(--accent-rgb),0.45) !important;
     background: transparent !important;
 }
 
-button[data-baseweb="tab"]:hover {
-    color: var(--text) !important;
-    background: transparent !important;
-}
-
-/* Barra deslizante nativa de Streamlit bajo la pestaña activa */
-[data-baseweb="tab-highlight"] { background-color: var(--accent) !important; }
-[data-baseweb="tab-border"]    { background-color: var(--hairline) !important; }
+/* Barra deslizante nativa (indicador activo) + línea base de la fila */
+[data-baseweb="tab-highlight"] { background-color: var(--accent) !important; height: 2px !important; }
+[data-baseweb="tab-border"]    { background-color: var(--hairline-2) !important; }
 
 /* ── Input genérico ────────────────────────────────────────────────── */
 [data-testid="stTextInput"] input {
@@ -2800,6 +2858,41 @@ hr {
     animation: anim-fadeIn var(--anim-slow) var(--ease-out) both;
 }
 
+/* ── 7b. TARJETA ENVOLVENTE de cada elemento gráfico ───────────────────
+   El tacómetro, el snowflake, las barras y la gráfica técnica quedan
+   embebidos en una tarjeta con superficie, borde, sombra y brillo superior,
+   igual que las tarjetas de pros/contras y análisis. Así se percibe que
+   "pertenecen" a la capa gráfica y el conjunto se ve cohesivo. */
+.stApp [data-testid="stPlotlyChart"] {
+    background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-0) 100%);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-lg);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-2), var(--inset-hi);
+    overflow: hidden;
+    transition: border-color var(--dur-2, 180ms) var(--ease-out),
+                box-shadow var(--dur-2, 180ms) var(--ease-out);
+}
+.stApp [data-testid="stPlotlyChart"]:hover {
+    border-color: var(--hairline-2);
+    box-shadow: var(--shadow-3), var(--inset-hi);
+}
+/* El lienzo interno de Plotly hereda esquinas redondeadas para que no asome
+   un rectángulo duro dentro de la tarjeta. */
+.stApp [data-testid="stPlotlyChart"] .js-plotly-plot,
+.stApp [data-testid="stPlotlyChart"] .plot-container,
+.stApp [data-testid="stPlotlyChart"] .svg-container {
+    border-radius: var(--r-md);
+    overflow: hidden;
+}
+/* En el sidebar NO se encajona (los mini-charts van sueltos). */
+section[data-testid="stSidebar"] [data-testid="stPlotlyChart"] {
+    background: transparent;
+    border: none;
+    padding: 0;
+    box-shadow: none;
+}
+
 /* ── 8. SIDEBAR WATCHLIST — slide-in por elemento ──────────────────── */
 [data-testid="stSidebar"] [data-testid="stButton"] {
     animation: anim-slideInLeft 420ms var(--ease-out) both;
@@ -3082,11 +3175,16 @@ section[data-testid="stSidebar"] {
     .stock-header-score  { font-size: 1.6rem !important; margin-left: auto !important; }
     .compound-machine-badge { font-size: 0.62rem !important; padding: 4px 8px !important; }
 
-    /* Tabs del análisis — scroll horizontal smooth en vez de cortarse */
-    [data-testid="stTabs"] > div:first-child {
+    /* Tabs del análisis — scroll horizontal smooth en vez de cortarse.
+       En pantallas estrechas se alinea a la izquierda (no centrado) para que
+       el scroll arranque desde la primera pestaña y ninguna quede oculta. */
+    [data-testid="stTabs"] > div:first-child,
+    [data-testid="stTabs"] [data-baseweb="tab-list"],
+    [data-testid="stTabs"] [role="tablist"] {
         overflow-x: auto !important;
         overflow-y: hidden !important;
         flex-wrap: nowrap !important;
+        justify-content: flex-start !important;
         scrollbar-width: thin !important;
         -webkit-overflow-scrolling: touch !important;
     }
@@ -3583,6 +3681,25 @@ section[data-testid="stSidebar"] {
 
 /* ── Signal card: agrupa pros o contras en UNA tarjeta ─────────────────
    Fondo un paso por encima del resto + sombra útil + filo semántico arriba. */
+/* Fila que contiene las dos tarjetas de señales (pros / contras).
+   align-items: stretch → ambas SIEMPRE con la misma altura (la mayor manda).
+   nowrap + min-width:0 → NUNCA se apilan: se encogen lado a lado aunque el
+   contenedor sea estrecho (col_thesis en el iframe), conservando la altura
+   idéntica. Con flex-wrap se apilaban por debajo de ~520px y perdían la
+   simetría. */
+.signal-card-row {
+    display: flex;
+    gap: 14px;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    margin: 8px 0 4px 0;
+}
+.signal-card-row > .signal-card {
+    flex: 1 1 0;       /* mismo ancho para ambas, sin base mínima que fuerce wrap */
+    min-width: 0;      /* permite que encojan en lugar de desbordar/apilar */
+    margin: 0;         /* el gap de la fila gestiona el espaciado */
+}
+
 .signal-card {
     background: var(--surface-2);
     border: 1px solid var(--hairline);
@@ -3591,7 +3708,7 @@ section[data-testid="stSidebar"] {
     margin: 8px 0 4px 0;
     box-shadow: var(--inset-hi), var(--shadow-2);
     animation: fadeInUp var(--dur-3) var(--ease-out) both;
-    height: 100%;
+    height: 100%;   /* con la fila flex, rellena la altura de la más alta */
 }
 
 .signal-card--pos { border-top: 2px solid rgba(var(--pos-rgb), 0.55); }

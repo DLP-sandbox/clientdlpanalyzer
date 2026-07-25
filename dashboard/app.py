@@ -988,15 +988,18 @@ def _signal_card_html(title, items, kind):
 
 
 def _render_pros_cons(report, pros_title="Señales positivas", cons_title="Señales de riesgo"):
-    col_p, col_c = st.columns(2)
-    with col_p:
-        if report.pros:
-            st.markdown(_signal_card_html(pros_title, report.pros[:3], "pos"),
-                        unsafe_allow_html=True)
-    with col_c:
-        if report.cons:
-            st.markdown(_signal_card_html(cons_title, report.cons[:3], "neg"),
-                        unsafe_allow_html=True)
+    # Ambas tarjetas se emiten en UN SOLO bloque flex (no en dos st.columns):
+    # así `align-items: stretch` garantiza que las dos tengan SIEMPRE la misma
+    # altura — la que tenga más ítems fija la altura y la otra la iguala. Con
+    # columnas separadas el height:100% no propaga por el anidado de Streamlit.
+    cards = ""
+    if report.pros:
+        cards += _signal_card_html(pros_title, report.pros[:3], "pos")
+    if report.cons:
+        cards += _signal_card_html(cons_title, report.cons[:3], "neg")
+    if cards:
+        st.markdown(f'<div class="signal-card-row">{cards}</div>',
+                    unsafe_allow_html=True)
 
 
 def _render_analysis_card(report, title="Análisis Detallado"):
@@ -1311,7 +1314,8 @@ def render_overview(analysis: StockAnalysis):
 
     with col_snow:
         fig = build_snowflake(analysis.snowflake)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_overview_snowflake_{analysis.ticker}")
 
     # Fila 2: Desglose por análisis (barras) a todo el ancho, para que se lean
@@ -1436,17 +1440,17 @@ def render_overview(analysis: StockAnalysis):
             unsafe_allow_html=True,
         )
 
-        # ── Fortalezas / Riesgos agrupados en signal-cards ────────
-        col_s, col_r = st.columns(2)
-        with col_s:
-            if analysis.key_strengths:
-                st.markdown(_signal_card_html("Fortalezas Clave", analysis.key_strengths, "pos"),
-                            unsafe_allow_html=True)
-
-        with col_r:
-            if analysis.key_risks:
-                st.markdown(_signal_card_html("Riesgos Clave", analysis.key_risks, "neg"),
-                            unsafe_allow_html=True)
+        # ── Fortalezas / Riesgos en signal-cards de IGUAL altura ──────
+        # Un solo bloque flex (no dos columnas) → align-items:stretch iguala
+        # la altura de ambas tarjetas a la de la más alta.
+        _sr_cards = ""
+        if analysis.key_strengths:
+            _sr_cards += _signal_card_html("Fortalezas Clave", analysis.key_strengths, "pos")
+        if analysis.key_risks:
+            _sr_cards += _signal_card_html("Riesgos Clave", analysis.key_risks, "neg")
+        if _sr_cards:
+            st.markdown(f'<div class="signal-card-row">{_sr_cards}</div>',
+                        unsafe_allow_html=True)
 
         # ── Card NUEVA: Diagnóstico de Asimetría (upside / downside / balanced) ─
         asym_dir = getattr(analysis, "asymmetry_direction", None)
@@ -1502,7 +1506,10 @@ def render_overview(analysis: StockAnalysis):
             st.markdown("---")
             fig = build_rr_chart(current_price, analysis.stop_loss,
                                  analysis.target_price, analysis.ticker)
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+            # staticPlot: gráfica fija — no se puede seleccionar, arrastrar ni
+            # hacer zoom. Se muestra tal cual, solo para leer.
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False, "staticPlot": True},
                             key=f"chart_overview_rr_{analysis.ticker}")
 
 
@@ -1571,9 +1578,11 @@ def render_technical(analysis: StockAnalysis):
 
     fig = (build_mountain_chart(df, analysis.ticker) if is_line
            else build_price_chart(df, indicators, analysis.ticker))
+    # No se puede arrastrar ni hacer zoom (dragmode=False en la figura +
+    # scrollZoom off), pero SÍ se mantiene el hover para leer precio/OHLC.
     st.plotly_chart(
         fig, use_container_width=True,
-        config={"displayModeBar": False},
+        config={"displayModeBar": False, "scrollZoom": False},
         key=f"chart_technical_price_{analysis.ticker}_{'line' if is_line else 'candles'}",
     )
 
@@ -1867,8 +1876,9 @@ def render_fundamentals(analysis: StockAnalysis):
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
                                 title="SUB-SCORES (0-100)", x_format="num",
-                                x_zero_line=False)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                                x_zero_line=False, color_by_score=True)
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_fund_pillars_{analysis.ticker}")
 
     # ── Pros / Cons ──
@@ -1949,8 +1959,9 @@ def render_future(analysis: StockAnalysis):
     if sub_items:
         fig = build_metric_bars(sub_items, height=240,
                                 title="SUB-SCORES (0-100)", x_format="num",
-                                x_zero_line=False)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                                x_zero_line=False, color_by_score=True)
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_future_pillars_{analysis.ticker}")
 
     # ── Pros / Cons ──
@@ -2062,7 +2073,8 @@ def render_institutional(analysis: StockAnalysis):
     top_inst = holders_raw.get("top_institutions") or []
     if top_inst:
         fig = build_holders_bars(top_inst)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_inst_holders_{analysis.ticker}")
 
     # ── Actividad reciente de directivos (insiders) ──
@@ -2244,7 +2256,8 @@ def render_catalysts(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Track Record de Earnings</div>',
                     unsafe_allow_html=True)
         fig = build_earnings_history_chart(eh)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_catalysts_earn_{analysis.ticker}")
 
     # ── Top Catalyst destacado ──
@@ -2324,7 +2337,8 @@ def render_macro(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Rotación Sectorial (1Y)</div>',
                     unsafe_allow_html=True)
         fig = build_sector_heatmap(sector_perf)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_macro_sector_heatmap_{analysis.ticker}")
 
     # ── Snapshot de indicadores macro ──
@@ -2393,7 +2407,7 @@ def render_sentiment(analysis: StockAnalysis):
     col_gauge, col_pills = st.columns([1, 2])
 
     with col_gauge:
-        fig = build_sentiment_gauge(report.score, height=260)
+        fig = build_sentiment_gauge(report.score, height=230)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
                         key=f"chart_sent_gauge_{analysis.ticker}")
 
@@ -2532,7 +2546,10 @@ def render_risk(analysis: StockAnalysis):
                         unsafe_allow_html=True)
             fig = build_rr_chart(current_price, analysis.stop_loss,
                                  analysis.target_price, analysis.ticker)
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+            # staticPlot: gráfica fija — no se puede seleccionar, arrastrar ni
+            # hacer zoom. Se muestra tal cual, solo para leer.
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False, "staticPlot": True},
                             key=f"chart_risk_tab_rr_{analysis.ticker}")
 
     # ── Pros / Cons ──
