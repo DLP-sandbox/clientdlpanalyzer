@@ -836,32 +836,11 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     background: rgba(var(--neg-rgb),0.06);
 }
 
-/* ── Tabs — SEPARADAS y legibles (mínimo robusto) ───────────────────────
-   Objetivo único ahora: que cada pestaña tenga espacio entre sí. El espacio se
-   da con MARGIN en los botones (y en el hijo flex directo, sea wrapper o no):
-   el margin sobrevive al `flex: 1 1 0` que baseweb inyecta y que colapsaba el
-   espacio dejándolas pegadas como una sola palabra. También gap como refuerzo. */
-[data-testid="stTabs"] > div:first-child,
-[data-testid="stTabs"] [data-baseweb="tab-list"],
-[data-testid="stTabs"] [role="tablist"] {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    overflow-x: auto !important;
-    scrollbar-width: thin !important;
-    gap: 14px !important;                                     /* refuerzo de separación */
-    justify-content: safe center !important;
-    border-bottom: 1px solid var(--hairline-2) !important;
-    background: transparent !important;
-}
-
-/* El hijo flex directo (botón o wrapper) NO se encoge y lleva margen lateral. */
-[data-testid="stTabs"] [data-baseweb="tab-list"] > *,
-[data-testid="stTabs"] [role="tablist"] > * {
-    flex: 0 0 auto !important;
-    margin-left: 8px !important;
-    margin-right: 8px !important;
-}
-
+/* ── Tabs — mínimo y SEGURO (no toca el flex del contenedor) ─────────────
+   ⚠️ NO poner display/flex/overflow/margin/justify-content sobre el tab-list
+   ni sobre "stTabs > div:first-child": eso volvía el contenedor flex-row y
+   colocaba el PANEL de contenido al lado de las pestañas (fuera de pantalla).
+   Aquí se estilan SOLO los botones + separadores + la línea inferior. */
 button[data-baseweb="tab"] {
     color: var(--text-2) !important;
     font-family: var(--font-ui) !important;
@@ -869,36 +848,22 @@ button[data-baseweb="tab"] {
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    padding: 10px 16px !important;
-    /* MARGEN LATERAL = la separación garantizada entre pestañas. */
-    margin-left: 8px !important;
-    margin-right: 8px !important;
-    flex: 0 0 auto !important;
-    white-space: nowrap !important;
-    border-radius: 0 !important;
+    padding: 10px 18px !important;
+    border-radius: 6px 6px 0 0 !important;
     border-bottom: 2px solid transparent !important;
+    /* Separador vertical entre pestañas: border-right (box model, robusto). */
+    border-right: 1px solid rgba(var(--accent-rgb),0.35) !important;
     background: transparent !important;
-    position: relative !important;
-    /* SEPARADOR = border-right SÓLIDO y visible. Es una propiedad de caja del
-       propio botón: si el botón se ve, el separador se ve. Imposible que no
-       aparezca (a diferencia de los pseudo-elementos). Baja hasta la línea
-       inferior porque ocupa toda la altura del botón. */
-    border-right: 2px solid rgba(var(--accent-rgb),0.55) !important;
     transition: color var(--dur-2) var(--ease-out),
                 background var(--dur-2) var(--ease-out),
                 border-bottom-color var(--dur-2) var(--ease-out) !important;
 }
-/* La última pestaña no lleva separador a la derecha. */
 button[data-baseweb="tab"]:last-child { border-right: none !important; }
-
-button[data-baseweb="tab"] p,
-button[data-baseweb="tab"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
 
 button[data-baseweb="tab"]:hover {
     color: var(--text-hi) !important;
     background: rgba(var(--accent-rgb),0.05) !important;
 }
-
 button[data-baseweb="tab"][aria-selected="true"] {
     color: var(--accent-hi) !important;
     font-weight: 600 !important;
@@ -906,6 +871,7 @@ button[data-baseweb="tab"][aria-selected="true"] {
     background: rgba(var(--accent-rgb),0.08) !important;
 }
 
+/* La fila de pestañas: solo la línea divisoria inferior (sin tocar su layout). */
 [data-baseweb="tab-highlight"] { background-color: var(--accent) !important; height: 2px !important; }
 [data-baseweb="tab-border"]    { background-color: var(--hairline-2) !important; }
 
@@ -2835,35 +2801,12 @@ hr {
     animation: anim-fadeIn var(--anim-slow) var(--ease-out) both;
 }
 
-/* ── 7b. TARJETA ENVOLVENTE de cada elemento gráfico ───────────────────
-   El tacómetro, el snowflake, las barras y la gráfica técnica quedan
-   embebidos en una tarjeta con superficie, borde, sombra y brillo superior,
-   igual que las tarjetas de pros/contras y análisis. Así se percibe que
-   "pertenecen" a la capa gráfica y el conjunto se ve cohesivo. */
-.stApp [data-testid="stPlotlyChart"] {
-    background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-0) 100%);
-    border: 1px solid var(--hairline);
-    border-radius: var(--r-lg);
-    padding: 14px 16px;
-    box-shadow: var(--shadow-2), var(--inset-hi);
-    /* ⚠️ SIN overflow:hidden. `overflow:hidden` sobre el contenedor de Plotly
-       recorta su sensor de redimensionado (ResizeObserver) y la gráfica no
-       autodimensiona → sale con ancho roto/enorme en el navegador. El
-       border-radius ya redondea la tarjeta. */
-    transition: border-color var(--dur-2, 180ms) var(--ease-out),
-                box-shadow var(--dur-2, 180ms) var(--ease-out);
-}
-.stApp [data-testid="stPlotlyChart"]:hover {
-    border-color: var(--hairline-2);
-    box-shadow: var(--shadow-3), var(--inset-hi);
-}
-/* En el sidebar NO se encajona (los mini-charts van sueltos). */
-section[data-testid="stSidebar"] [data-testid="stPlotlyChart"] {
-    background: transparent;
-    border: none;
-    padding: 0;
-    box-shadow: none;
-}
+/* ── 7b. (Sin tarjeta envolvente en las gráficas) ─────────────────────
+   Se quitó la tarjeta alrededor de cada gráfica Plotly: el fondo/borde/
+   padding sobre [data-testid="stPlotlyChart"] interferían con la medición
+   de ancho de Plotly (use_container_width) y las gráficas salían con un
+   ancho gigante que se desbordaba y tapaba los elementos vecinos (tiles
+   de precio/objetivo/R-R/sizing, MA/RS, Upside-Downside). */
 
 /* ── 8. SIDEBAR WATCHLIST — slide-in por elemento ──────────────────── */
 [data-testid="stSidebar"] [data-testid="stButton"] {
@@ -3147,19 +3090,10 @@ section[data-testid="stSidebar"] {
     .stock-header-score  { font-size: 1.6rem !important; margin-left: auto !important; }
     .compound-machine-badge { font-size: 0.62rem !important; padding: 4px 8px !important; }
 
-    /* Tabs del análisis — scroll horizontal smooth en vez de cortarse.
-       En pantallas estrechas se alinea a la izquierda (no centrado) para que
-       el scroll arranque desde la primera pestaña y ninguna quede oculta. */
-    [data-testid="stTabs"] > div:first-child,
-    [data-testid="stTabs"] [data-baseweb="tab-list"],
-    [data-testid="stTabs"] [role="tablist"] {
-        overflow-x: auto !important;
-        overflow-y: hidden !important;
-        flex-wrap: nowrap !important;
-        justify-content: flex-start !important;
-        scrollbar-width: thin !important;
-        -webkit-overflow-scrolling: touch !important;
-    }
+    /* Tabs del análisis en pantallas estrechas: SOLO se reduce el tamaño de los
+       botones (abajo). NO se toca overflow/flex del contenedor: hacerlo sobre
+       "> div:first-child" (que contiene el panel) empujaba el contenido fuera
+       de pantalla. Streamlit ya gestiona el scroll de las pestañas nativamente. */
     [data-testid="stTabs"] button[data-baseweb="tab"] {
         padding: 8px 12px !important;
         font-size: 0.74rem !important;
