@@ -1506,10 +1506,12 @@ def render_overview(analysis: StockAnalysis):
             st.markdown("---")
             fig = build_rr_chart(current_price, analysis.stop_loss,
                                  analysis.target_price, analysis.ticker)
-            # staticPlot: gráfica fija — no se puede seleccionar, arrastrar ni
-            # hacer zoom. Se muestra tal cual, solo para leer.
+            # Como estaba antes: displayModeBar False. NO staticPlot — esta
+            # figura no tiene trazas (solo formas + líneas) y staticPlot la
+            # dejaba en blanco. El bloqueo de zoom/arrastre va con dragmode=False
+            # dentro de la propia figura.
             st.plotly_chart(fig, use_container_width=True,
-                            config={"displayModeBar": False, "staticPlot": True},
+                            config={"displayModeBar": False},
                             key=f"chart_overview_rr_{analysis.ticker}")
 
 
@@ -2546,10 +2548,11 @@ def render_risk(analysis: StockAnalysis):
                         unsafe_allow_html=True)
             fig = build_rr_chart(current_price, analysis.stop_loss,
                                  analysis.target_price, analysis.ticker)
-            # staticPlot: gráfica fija — no se puede seleccionar, arrastrar ni
-            # hacer zoom. Se muestra tal cual, solo para leer.
+            # Como estaba antes: displayModeBar False. NO staticPlot (dejaba la
+            # figura en blanco por no tener trazas). dragmode=False bloquea el
+            # zoom/arrastre desde la propia figura.
             st.plotly_chart(fig, use_container_width=True,
-                            config={"displayModeBar": False, "staticPlot": True},
+                            config={"displayModeBar": False},
                             key=f"chart_risk_tab_rr_{analysis.ticker}")
 
     # ── Pros / Cons ──

@@ -1225,6 +1225,7 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
         height=300,
         showlegend=False,
+        dragmode=False,   # no se puede arrastrar ni hacer zoom (sin usar staticPlot)
         yaxis=dict(range=[stop * 0.94, target * 1.06], gridcolor=GRID, zerolinecolor=GRID,
                    tickprefix="$", tickfont=dict(color=MUTED, size=9)),
         xaxis=dict(showticklabels=False, showgrid=False, zerolinecolor=GRID),
