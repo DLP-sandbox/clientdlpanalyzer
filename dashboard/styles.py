@@ -853,8 +853,16 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [role="tablist"] {
     display: flex !important;
-    justify-content: center !important;                       /* menú centrado en la app */
+    /* "safe center": centra cuando las pestañas caben; si NO caben, se alinea
+       al inicio y se puede hacer scroll (en vez de recortar el principio). */
+    justify-content: safe center !important;                  /* menú centrado en la app */
     gap: 0 !important;                                        /* sin gap → separadores equidistantes */
+    flex-wrap: nowrap !important;
+    /* Cuando las 9 pestañas no caben (iframe estrecho), la fila hace scroll
+       horizontal en lugar de aplastar los botones. */
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    scrollbar-width: thin !important;
     margin-left: auto !important;
     margin-right: auto !important;
     border-bottom: 1px solid var(--hairline-2) !important;    /* línea divisoria clara */
@@ -873,6 +881,12 @@ button[data-baseweb="tab"] {
        MISMA distancia del texto. */
     padding: 10px 20px !important;
     margin: 0 !important;
+    /* flex-shrink:0 → los botones NUNCA se encogen/aplastan aunque no quepan
+       (por eso antes se veían pegados y sin separadores); si sobran, la fila
+       hace scroll. white-space:nowrap mantiene cada etiqueta en una línea. */
+    flex-shrink: 0 !important;
+    flex-grow: 0 !important;
+    white-space: nowrap !important;
     justify-content: center !important;
     text-align: center !important;
     border-radius: 0 !important;
