@@ -878,9 +878,26 @@ button[data-baseweb="tab"] {
     border-radius: 6px 6px 0 0 !important;
     border-bottom: 2px solid transparent !important;
     background: transparent !important;
+    position: relative !important;
     transition: color var(--dur-2) var(--ease-out),
                 background var(--dur-2) var(--ease-out),
                 border-bottom-color var(--dur-2) var(--ease-out) !important;
+}
+
+/* Separador vertical dorado, centrado en el hueco entre pestañas (no en el
+   borde). ::before absoluto a la izquierda de cada pestaña salvo la primera. */
+button[data-baseweb="tab"]:not(:first-child)::before {
+    content: "";
+    position: absolute;
+    left: -15px;
+    top: 18%;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg,
+        rgba(var(--accent-rgb),0.15) 0%,
+        rgba(var(--accent-rgb),0.55) 100%);
+    box-shadow: 0 0 6px rgba(var(--accent-rgb),0.35);
+    pointer-events: none;
 }
 
 button[data-baseweb="tab"] p,
