@@ -5,6 +5,7 @@ tradingview-screener>=2.5.0
 pandas>=2.0.0
 ta>=0.10.2
 numpy>=1.24.0
+scipy>=1.11.0          # requerido para el reparado de datos de yfinance; sin él, en Render los precios llegan incompletos → NaN (presente en la copia que SÍ funciona)
 plotly>=5.18.0
 streamlit>=1.40.0
 requests>=2.31.0

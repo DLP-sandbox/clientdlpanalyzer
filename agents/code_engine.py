@@ -14,9 +14,17 @@ indicadores técnicos, earnings, holders y macro. El texto es plantillado a
 partir de esas métricas (lectura automática, no IA).
 """
 from datetime import datetime
+import math
 
 
 # ── Helpers numéricos (tolerantes a None) ────────────────────────────────
+def _bad(v):
+    """True si v es None o NaN — así los formateadores no imprimen 'nan'.
+    En Render los precios pueden llegar como NaN (fetch incompleto); sin este
+    guard salían '$nan' / 'nan%' en los tiles de precio/objetivo/R-R/sizing."""
+    return v is None or (isinstance(v, float) and math.isnan(v))
+
+
 def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
@@ -37,17 +45,17 @@ def _conv(score):
 
 
 def _pct(v, dec=1, signed=False):
-    if v is None:
+    if _bad(v):
         return "N/A"
     return f"{v:+.{dec}f}%" if signed else f"{v:.{dec}f}%"
 
 
 def _num(v, dec=2):
-    return "N/A" if v is None else f"{v:.{dec}f}"
+    return "N/A" if _bad(v) else f"{v:.{dec}f}"
 
 
 def _money(v):
-    if v is None:
+    if _bad(v):
         return "N/A"
     try:
         return f"${v:,.2f}"

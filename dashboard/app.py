@@ -1030,14 +1030,19 @@ def _render_insight_card(title, content, color="#E2B25C", icon="💡"):
 
 
 def _safe_num(value, default=None):
-    """Convierte a float si es posible, retorna default si no."""
+    """Convierte a float si es posible, retorna default si no.
+    Un NaN también se trata como inválido (default): en Render los precios
+    pueden llegar como NaN y sin esto salían '$nan' / 'nan%' en los tiles."""
+    import math as _math
     try:
         if value is None or value == "" or value == "N/A":
             return default
         if isinstance(value, str):
             cleaned = value.replace("$", "").replace(",", "").replace("%", "").strip()
-            return float(cleaned)
-        return float(value)
+            n = float(cleaned)
+        else:
+            n = float(value)
+        return default if _math.isnan(n) or _math.isinf(n) else n
     except Exception:
         return default
 
@@ -1365,8 +1370,12 @@ def render_overview(analysis: StockAnalysis):
         if any([analysis.entry_price, analysis.target_price, analysis.risk_reward, analysis.position_size_pct]):
             st.markdown('<div class="kpi-section-title">Métricas Clave</div>', unsafe_allow_html=True)
 
-            entry_str  = f"${analysis.entry_price:.2f}"  if analysis.entry_price else "—"
-            target_str = f"${analysis.target_price:.2f}" if analysis.target_price else "—"
+            # _safe_num filtra None y NaN → si el dato llegó como NaN (fetch
+            # incompleto en Render), el tile muestra "—" en vez de "$nan".
+            _entry_n  = _safe_num(analysis.entry_price)
+            _target_n = _safe_num(analysis.target_price)
+            entry_str  = f"${_entry_n:.2f}"  if _entry_n  is not None else "—"
+            target_str = f"${_target_n:.2f}" if _target_n is not None else "—"
             rr_str     = _extract_rr_ratio(analysis.risk_reward)
             rr_num     = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
             sizing_str = _extract_percent(analysis.position_size_pct) if analysis.position_size_pct else "—"
@@ -1503,7 +1512,7 @@ def render_overview(analysis: StockAnalysis):
     if analysis.stop_loss and analysis.target_price:
         from data.market_data import get_company_info
         info_live = get_company_info(analysis.ticker) or {}
-        current_price = info_live.get("current_price") or analysis.entry_price
+        current_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
         if current_price:
             st.markdown("---")
             fig = build_rr_chart(current_price, analysis.stop_loss,
@@ -2506,7 +2515,7 @@ def render_risk(analysis: StockAnalysis):
     # (más útil que el entry hipotético del agente)
     from data.market_data import get_company_info
     info_live = get_company_info(analysis.ticker) or {}
-    current_price = info_live.get("current_price") or analysis.entry_price
+    current_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
 
     downside = None
     upside = None
@@ -2544,7 +2553,7 @@ def render_risk(analysis: StockAnalysis):
     if analysis.stop_loss and analysis.target_price:
         from data.market_data import get_company_info
         info_live = get_company_info(analysis.ticker) or {}
-        current_price = info_live.get("current_price") or analysis.entry_price
+        current_price = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
         if current_price:
             st.markdown('<div class="section-title-bar">Upside / Downside vs Precio Actual</div>',
                         unsafe_allow_html=True)
