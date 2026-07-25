@@ -836,30 +836,30 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     background: rgba(var(--neg-rgb),0.06);
 }
 
-/* ── Tabs — reconstrucción limpia y robusta ─────────────────────────────
-   Se estila SOLO lo visual y se respeta el layout flex de Streamlit. Los
-   separadores usan border-right (SIEMPRE renderiza; los ::after no lo hacían
-   en el DOM real). Padding amplio para que no se vean apretados; gap:0 con el
-   border-right hace de divisor limpio que baja hasta la línea inferior. */
-[data-testid="stTabs"] > div:first-child {
-    justify-content: center !important;
-    background: transparent !important;
-}
+/* ── Tabs — SEPARADAS y legibles (mínimo robusto) ───────────────────────
+   Objetivo único ahora: que cada pestaña tenga espacio entre sí. El espacio se
+   da con MARGIN en los botones (y en el hijo flex directo, sea wrapper o no):
+   el margin sobrevive al `flex: 1 1 0` que baseweb inyecta y que colapsaba el
+   espacio dejándolas pegadas como una sola palabra. También gap como refuerzo. */
+[data-testid="stTabs"] > div:first-child,
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [role="tablist"] {
     display: flex !important;
-    justify-content: safe center !important;   /* menú centrado; si no caben, scroll desde el inicio */
     flex-wrap: nowrap !important;
     overflow-x: auto !important;
     scrollbar-width: thin !important;
-    gap: 0 !important;
-    border-bottom: 1px solid var(--hairline-2) !important;   /* línea divisoria clara */
+    gap: 14px !important;                                     /* refuerzo de separación */
+    justify-content: safe center !important;
+    border-bottom: 1px solid var(--hairline-2) !important;
     background: transparent !important;
 }
-/* Cada pestaña mide según su contenido y NO se encoge (baseweb pone flex:1 1 0). */
+
+/* El hijo flex directo (botón o wrapper) NO se encoge y lleva margen lateral. */
 [data-testid="stTabs"] [data-baseweb="tab-list"] > *,
 [data-testid="stTabs"] [role="tablist"] > * {
     flex: 0 0 auto !important;
+    margin-left: 8px !important;
+    margin-right: 8px !important;
 }
 
 button[data-baseweb="tab"] {
@@ -869,23 +869,20 @@ button[data-baseweb="tab"] {
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    padding: 10px 22px !important;
+    padding: 10px 16px !important;
+    /* MARGEN LATERAL = la separación garantizada entre pestañas. */
+    margin-left: 8px !important;
+    margin-right: 8px !important;
     flex: 0 0 auto !important;
     white-space: nowrap !important;
-    border-radius: 0 !important;
-    /* Separador vertical entre pestañas: border-right que baja hasta la línea
-       inferior. Robusto (box model), a diferencia de ::after. */
-    border-right: 1px solid var(--hairline) !important;
+    border-radius: 6px 6px 0 0 !important;
     border-bottom: 2px solid transparent !important;
     background: transparent !important;
-    text-shadow: 0 0 10px rgba(255,255,255,0.08) !important;   /* brillo leve tras la palabra */
     transition: color var(--dur-2) var(--ease-out),
                 background var(--dur-2) var(--ease-out),
                 border-bottom-color var(--dur-2) var(--ease-out) !important;
 }
-button[data-baseweb="tab"]:last-child { border-right: none !important; }
 
-/* El párrafo interno del label no aporta márgenes. */
 button[data-baseweb="tab"] p,
 button[data-baseweb="tab"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
 
@@ -899,10 +896,8 @@ button[data-baseweb="tab"][aria-selected="true"] {
     font-weight: 600 !important;
     border-bottom-color: var(--accent) !important;
     background: rgba(var(--accent-rgb),0.08) !important;
-    text-shadow: 0 0 14px rgba(var(--accent-rgb),0.40) !important;   /* brillo dorado en la activa */
 }
 
-/* Indicador nativo deslizante + línea base de la fila */
 [data-baseweb="tab-highlight"] { background-color: var(--accent) !important; height: 2px !important; }
 [data-baseweb="tab-border"]    { background-color: var(--hairline-2) !important; }
 
