@@ -868,6 +868,12 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     border-bottom: 1px solid var(--hairline-2) !important;    /* línea divisoria clara */
     background: transparent !important;
 }
+/* Sea el <button> o un wrapper el hijo flex directo, NINGUNO se encoge. */
+[data-testid="stTabs"] [data-baseweb="tab-list"] > *,
+[data-testid="stTabs"] [role="tablist"] > * {
+    flex: 0 0 auto !important;
+    min-width: max-content !important;
+}
 
 button[data-baseweb="tab"] {
     color: var(--text-2) !important;
@@ -881,11 +887,14 @@ button[data-baseweb="tab"] {
        MISMA distancia del texto. */
     padding: 10px 20px !important;
     margin: 0 !important;
-    /* flex-shrink:0 → los botones NUNCA se encogen/aplastan aunque no quepan
-       (por eso antes se veían pegados y sin separadores); si sobran, la fila
-       hace scroll. white-space:nowrap mantiene cada etiqueta en una línea. */
-    flex-shrink: 0 !important;
-    flex-grow: 0 !important;
+    /* ⚠️ baseweb pone inline `flex: 1 1 0` en cada tab → se encogían para
+       repartirse el ancho y quedaban APLASTADOS. El shorthand `flex: 0 0 auto`
+       (grow 0, shrink 0, basis auto) sobrescribe TAMBIÉN el flex-basis:0 de
+       baseweb; así cada botón mide según su contenido y no se comprime.
+       (flex-shrink:0 solo no basta: dejaba el basis 0 de baseweb.) */
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: max-content !important;
     white-space: nowrap !important;
     justify-content: center !important;
     text-align: center !important;
