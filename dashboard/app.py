@@ -919,7 +919,9 @@ def _meter_scale(value, lo, hi, invert=False):
 
 def _meter_html(pct):
     """Termómetro rojo→ámbar→verde con dot en la posición del dato."""
-    if pct is None:
+    # Blindaje: cualquier valor NO numérico (None, texto, etc.) no pinta medidor
+    # y NO rompe la fila entera de tiles/pills.
+    if not isinstance(pct, (int, float)) or isinstance(pct, bool):
         return ""
     dot = "#F1495F" if pct < 35 else "#E2B25C" if pct < 68 else "#3DD68C"
     glow = {"#F1495F": "241,73,95", "#E2B25C": "226,178,92", "#3DD68C": "61,214,140"}[dot]

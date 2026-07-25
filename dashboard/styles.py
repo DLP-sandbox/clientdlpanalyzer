@@ -2846,21 +2846,16 @@ hr {
     border-radius: var(--r-lg);
     padding: 14px 16px;
     box-shadow: var(--shadow-2), var(--inset-hi);
-    overflow: hidden;
+    /* ⚠️ SIN overflow:hidden. `overflow:hidden` sobre el contenedor de Plotly
+       recorta su sensor de redimensionado (ResizeObserver) y la gráfica no
+       autodimensiona → sale con ancho roto/enorme en el navegador. El
+       border-radius ya redondea la tarjeta. */
     transition: border-color var(--dur-2, 180ms) var(--ease-out),
                 box-shadow var(--dur-2, 180ms) var(--ease-out);
 }
 .stApp [data-testid="stPlotlyChart"]:hover {
     border-color: var(--hairline-2);
     box-shadow: var(--shadow-3), var(--inset-hi);
-}
-/* El lienzo interno de Plotly hereda esquinas redondeadas para que no asome
-   un rectángulo duro dentro de la tarjeta. */
-.stApp [data-testid="stPlotlyChart"] .js-plotly-plot,
-.stApp [data-testid="stPlotlyChart"] .plot-container,
-.stApp [data-testid="stPlotlyChart"] .svg-container {
-    border-radius: var(--r-md);
-    overflow: hidden;
 }
 /* En el sidebar NO se encajona (los mini-charts van sueltos). */
 section[data-testid="stSidebar"] [data-testid="stPlotlyChart"] {
