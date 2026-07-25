@@ -875,30 +875,21 @@ button[data-baseweb="tab"] {
     margin-right: 8px !important;
     flex: 0 0 auto !important;
     white-space: nowrap !important;
-    border-radius: 6px 6px 0 0 !important;
+    border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
     background: transparent !important;
     position: relative !important;
+    /* SEPARADOR = border-right SÓLIDO y visible. Es una propiedad de caja del
+       propio botón: si el botón se ve, el separador se ve. Imposible que no
+       aparezca (a diferencia de los pseudo-elementos). Baja hasta la línea
+       inferior porque ocupa toda la altura del botón. */
+    border-right: 2px solid rgba(var(--accent-rgb),0.55) !important;
     transition: color var(--dur-2) var(--ease-out),
                 background var(--dur-2) var(--ease-out),
                 border-bottom-color var(--dur-2) var(--ease-out) !important;
 }
-
-/* Separador vertical dorado, centrado en el hueco entre pestañas (no en el
-   borde). ::before absoluto a la izquierda de cada pestaña salvo la primera. */
-button[data-baseweb="tab"]:not(:first-child)::before {
-    content: "";
-    position: absolute;
-    left: -15px;
-    top: 18%;
-    bottom: 0;
-    width: 1px;
-    background: linear-gradient(180deg,
-        rgba(var(--accent-rgb),0.15) 0%,
-        rgba(var(--accent-rgb),0.55) 100%);
-    box-shadow: 0 0 6px rgba(var(--accent-rgb),0.35);
-    pointer-events: none;
-}
+/* La última pestaña no lleva separador a la derecha. */
+button[data-baseweb="tab"]:last-child { border-right: none !important; }
 
 button[data-baseweb="tab"] p,
 button[data-baseweb="tab"] [data-testid="stMarkdownContainer"] { margin: 0 !important; }
