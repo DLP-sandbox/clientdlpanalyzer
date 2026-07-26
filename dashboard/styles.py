@@ -839,11 +839,13 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     background: rgba(var(--neg-rgb),0.06);
 }
 
-/* ── Tabs — mínimo y SEGURO (no toca el flex del contenedor) ─────────────
-   ⚠️ NO poner display/flex/overflow/margin/justify-content sobre el tab-list
-   ni sobre "stTabs > div:first-child": eso volvía el contenedor flex-row y
-   colocaba el PANEL de contenido al lado de las pestañas (fuera de pantalla).
-   Aquí se estilan SOLO los botones + separadores + la línea inferior. */
+/* ── Tabs — botones + separadores + centrado ─────────────────────────────
+   ⚠️ NO poner display/flex-direction/overflow sobre "stTabs > div:first-child"
+   (el WRAPPER que envuelve al panel): eso lo volvía flex-row y ponía el panel
+   al lado de las pestañas (fuera de pantalla). En cambio, `justify-content:
+   center` sobre el [data-baseweb="tab-list"] SÍ es seguro y es como la versión
+   Analista-Mercados centra las pestañas: el tab-list solo contiene los botones
+   (el panel es su hermano), así que centrar ahí no mueve el contenido. */
 button[data-baseweb="tab"] {
     color: var(--text-2) !important;
     font-family: var(--font-ui) !important;
@@ -877,6 +879,14 @@ button[data-baseweb="tab"][aria-selected="true"] {
 /* La fila de pestañas: solo la línea divisoria inferior (sin tocar su layout). */
 [data-baseweb="tab-highlight"] { background-color: var(--accent) !important; height: 2px !important; }
 [data-baseweb="tab-border"]    { background-color: var(--hairline-2) !important; }
+
+/* Pestañas CENTRADAS en el dashboard (como en Analista-Mercados). El contenedor
+   flex REAL es el tab-list; centrar aquí solo alinea los botones — el panel es
+   su hermano y no se mueve. En estrecho se vuelve a flex-start (media query). */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"] {
+    justify-content: center !important;
+}
 
 /* ── Input genérico ────────────────────────────────────────────────── */
 [data-testid="stTextInput"] input {
@@ -3093,10 +3103,16 @@ section[data-testid="stSidebar"] {
     .stock-header-score  { font-size: 1.6rem !important; margin-left: auto !important; }
     .compound-machine-badge { font-size: 0.62rem !important; padding: 4px 8px !important; }
 
-    /* Tabs del análisis en pantallas estrechas: SOLO se reduce el tamaño de los
-       botones (abajo). NO se toca overflow/flex del contenedor: hacerlo sobre
-       "> div:first-child" (que contiene el panel) empujaba el contenido fuera
-       de pantalla. Streamlit ya gestiona el scroll de las pestañas nativamente. */
+    /* Tabs del análisis en pantallas estrechas: se reduce el tamaño de los
+       botones y se vuelve a alinear a la IZQUIERDA. Si se quedaran centradas y
+       las pestañas no caben, al hacer scroll horizontal la primera quedaría
+       inalcanzable — flex-start lo evita. NO se toca overflow/flex del wrapper
+       "> div:first-child" (que contiene el panel); Streamlit ya gestiona el
+       scroll de las pestañas nativamente. */
+    [data-testid="stTabs"] [data-baseweb="tab-list"],
+    [data-testid="stTabs"] [role="tablist"] {
+        justify-content: flex-start !important;
+    }
     [data-testid="stTabs"] button[data-baseweb="tab"] {
         padding: 8px 12px !important;
         font-size: 0.74rem !important;
