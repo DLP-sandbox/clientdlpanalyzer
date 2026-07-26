@@ -1730,6 +1730,16 @@ hr {
     vertical-align: 2px;
 }
 
+/* Cabecera del pill: label a la izquierda y el "?" de ayuda arriba a la derecha
+   (mismo patrón que .kpi-tile-header). El espacio inferior lo pone la cabecera. */
+.status-pill-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
 .status-pill-label {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.6rem;
@@ -1746,7 +1756,6 @@ hr {
     word-break: normal;
     overflow-wrap: anywhere;
     line-height: 1.2;
-    margin-bottom: 6px;
 }
 
 .status-pill-value {
