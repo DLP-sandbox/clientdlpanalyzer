@@ -999,6 +999,19 @@ def score_risk(risk_metrics, info, ind):
     target = risk_metrics.get("target_suggested")
     beta = risk_metrics.get("beta", info.get("beta", 1.0)) or 1.0
 
+    # Blindaje NaN: un dato corrupto (NaN) se trata como AUSENTE para que las
+    # ramas de la prosa se elijan por el valor real y nunca impriman "N/A" a
+    # mitad de frase ni disparen la rama equivocada (p.ej. 'muy volátil' con un
+    # ATR NaN). El scoring ya tolera None (usa _lin con default).
+    if _bad(rr): rr = 0
+    atr_pct    = None if _bad(atr_pct)    else atr_pct
+    risk_pct   = None if _bad(risk_pct)   else risk_pct
+    reward_pct = None if _bad(reward_pct) else reward_pct
+    price      = None if _bad(price)      else price
+    stop       = None if _bad(stop)       else stop
+    target     = None if _bad(target)     else target
+    if _bad(beta): beta = 1.0
+
     # Risk/Reward quality (0-40)
     rrq = _lin(rr, 0.5, 3.0, 6, 40)
     rrq = _clamp(rrq, 4, 40)

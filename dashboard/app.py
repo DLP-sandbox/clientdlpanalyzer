@@ -2634,6 +2634,115 @@ def render_sentiment(analysis: StockAnalysis):
     _render_analysis_card(report, title="Análisis de Sentimiento")
 
 
+def _risk_analysis_prose(price, stop, target, downside, upside, rr, atr_pct, beta) -> str:
+    """Genera el 'Análisis Completo de Riesgo' EN VIVO desde los MISMOS números
+    que muestran los tiles (precio, protección, objetivo, R/R, ATR, beta).
+
+    BLINDADO contra NaN/None: cada dato se sanea con _safe_num y cada frase solo
+    se añade si su dato es válido → NUNCA aparece 'N/A' a mitad de una oración ni
+    se dispara la rama equivocada (antes, un ATR NaN pasaba el `is not None` y
+    caía en la rama de 'muy volátil' imprimiendo 'N/A'). Devuelve '' si no hay
+    ni precio. Lenguaje natural, atado a las cifras reales y accionable."""
+    price = _safe_num(price); stop = _safe_num(stop); target = _safe_num(target)
+    downside = _safe_num(downside); upside = _safe_num(upside)
+    rr = _safe_num(rr); atr_pct = _safe_num(atr_pct); beta = _safe_num(beta)
+    if price is None:
+        return ""
+    partes = []
+
+    # 1) El plan, en palabras claras (entrada ≈ precio actual, protección DEBAJO,
+    #    objetivo ARRIBA), con los porcentajes reales.
+    if stop is not None and target is not None and downside is not None and upside is not None:
+        partes.append(
+            f"El plan es claro: con la acción en torno a ${price:,.2f}, se coloca una protección (un "
+            f"'stop', el precio al que uno acepta que se equivocó y vende para cortar la pérdida) en "
+            f"${stop:,.2f} —un {downside:.1f}% por debajo— y se apunta a un objetivo de ${target:,.2f} "
+            f"—un {upside:.1f}% por encima—.")
+        if rr is not None:
+            if rr >= 2.5:
+                lect = ("claramente a favor: se apunta a ganar bastante más de lo que se arriesga, justo "
+                        "el tipo de relación que conviene buscar antes de entrar")
+            elif rr >= 2:
+                lect = "favorable: el recorrido al objetivo supera con holgura lo que se pone en juego"
+            elif rr >= 1.5:
+                lect = "razonable: se puede ganar más de lo que se arriesga, aunque sin un margen enorme"
+            elif rr >= 1:
+                lect = ("ajustada: lo que se puede ganar y lo que se arriesga están parejos, así que el "
+                        "punto de entrada pesa mucho en el resultado")
+            else:
+                lect = ("poco atractiva de momento: se arriesga más de lo que se apunta a ganar, y "
+                        "convendría esperar un mejor precio de entrada")
+            partes.append(
+                f"Puesto en una sola cifra, la relación entre lo que se busca ganar y lo que se arriesga es "
+                f"de {rr:.1f} a 1, {lect}.")
+    elif stop is not None and target is not None:
+        partes.append(
+            f"Los niveles de referencia son: precio actual ${price:,.2f}, protección en ${stop:,.2f} y "
+            f"objetivo en ${target:,.2f}.")
+    else:
+        partes.append(f"El precio actual de referencia es ${price:,.2f}.")
+
+    # 2) Volatilidad (ATR) — SOLO si es un número válido. La rama se elige por el
+    #    valor real, nunca por un NaN.
+    if atr_pct is not None:
+        if atr_pct <= 2:
+            partes.append(
+                f"En cuanto a nervios, es una acción relativamente tranquila: en un día normal se mueve "
+                f"alrededor de un {atr_pct:.1f}%, así que rara vez da grandes sustos y se puede manejar con "
+                f"un tamaño de posición habitual y un stop cómodo.")
+        elif atr_pct <= 4:
+            partes.append(
+                f"Su volatilidad es moderada: oscila cerca de un {atr_pct:.1f}% al día. Es un vaivén "
+                f"llevadero siempre que no se sobredimensione la posición ni se pegue el stop demasiado al "
+                f"precio.")
+        else:
+            partes.append(
+                f"Ojo con lo movida que es: cambia de precio con fuerza, alrededor de un {atr_pct:.1f}% cada "
+                f"día. En la práctica conviene comprar una cantidad algo menor de lo habitual y dar más aire "
+                f"a la protección, porque un simple bandazo del día podría sacarte de la posición sin que la "
+                f"tesis haya fallado.")
+
+    # 3) Beta — SOLO si es un número válido.
+    if beta is not None:
+        if beta < 0:
+            partes.append(
+                f"Frente al mercado se mueve al revés (beta {beta:.1f}): tiende a subir cuando el índice cae "
+                f"y viceversa, lo que puede darle un papel de cobertura dentro de la cartera.")
+        elif beta <= 0.9:
+            partes.append(
+                f"Es defensiva respecto al mercado (beta {beta:.1f}): suele moverse menos que el índice, "
+                f"tanto en las subidas como en las caídas.")
+        elif beta <= 1.3:
+            partes.append(
+                f"Se mueve a un ritmo parecido al del mercado (beta {beta:.1f}): ni amplifica ni amortigua "
+                f"demasiado sus subidas y bajadas.")
+        else:
+            partes.append(
+                f"Es bastante sensible al mercado (beta {beta:.1f}): cuando el índice general se mueve, ella "
+                f"tiende a hacerlo con más fuerza, así que en un entorno turbulento puede sufrir —o "
+                f"rebotar— más que la media.")
+
+    # 4) Cierre accionable, atado a la relación riesgo/beneficio real.
+    if rr is not None:
+        if rr >= 2:
+            partes.append(
+                "En resumen, las cuentas acompañan: hay más para ganar que para perder. La clave será la "
+                "disciplina de respetar la protección pase lo que pase y no mover el objetivo por "
+                "impaciencia.")
+        elif rr >= 1:
+            partes.append(
+                "En resumen, es un perfil equilibrado: ni una ganga ni una trampa. El resultado dependerá "
+                "sobre todo de la disciplina para respetar la entrada, la protección y el objetivo "
+                "marcados.")
+        else:
+            partes.append(
+                "En resumen, hoy las cuentas no acompañan del todo: se arriesga casi tanto —o más— de lo "
+                "que se apunta a ganar. Tendría sentido solo con una convicción muy alta; de lo contrario, "
+                "conviene esperar un mejor punto de entrada.")
+
+    return " ".join(partes)
+
+
 def render_risk(analysis: StockAnalysis):
     report = analysis.reports.get("risk")
     if report is None:
@@ -2728,7 +2837,24 @@ def render_risk(analysis: StockAnalysis):
                       pros_title="✅ Top 3 Aspectos Favorables del Riesgo",
                       cons_title="⚠️ Top 3 Riesgos Identificados")
 
-    _render_analysis_card(report, title="Análisis Completo de Riesgo")
+    # ── Análisis completo — REGENERADO EN VIVO desde los mismos números que los
+    #    tiles (precio, protección, objetivo, R/R, ATR, beta). Blindado contra
+    #    NaN: nunca imprime 'N/A' a mitad de frase ni la rama equivocada. Si no
+    #    hubiera ni precio, cae al texto persistido del agente. ────────────────
+    beta_live = _safe_num(info_live.get("beta"))
+    if beta_live is None:
+        beta_live = _safe_num(computed.get("beta"))
+    _risk_prose = _risk_analysis_prose(current_price, stop_lvl, target_lvl,
+                                       downside, upside, rr_num, vol, beta_live)
+    if _risk_prose:
+        st.markdown('<div class="section-title-bar">Análisis Completo de Riesgo</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="analysis-card"><div class="analysis-text">{_risk_prose}</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        _render_analysis_card(report, title="Análisis Completo de Riesgo")
 
 
 # ──────────────────────────────────────────────────────────────────────
