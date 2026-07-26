@@ -8,7 +8,7 @@ import pandas as pd
 from agents.base import BaseAgent, AgentReport
 from data.market_data import (
     get_price_history, get_weekly_history,
-    compute_technical_indicators, get_relative_strength
+    compute_technical_indicators, get_technical_indicators, get_relative_strength
 )
 
 
@@ -79,11 +79,13 @@ class TechnicalAgent(BaseAgent):
             # Weekly data (3 años para el weekly chart)
             df_weekly = get_weekly_history(ticker, period="3y")
 
-            if df_daily.empty:
+            # Indicadores diarios con respaldo TradingView: si el OHLCV viene vacío
+            # o corrupto (Yahoo/Nasdaq bloqueados en cloud), get_technical_indicators
+            # cae a TradingView y devuelve Stage/MA/RSI/ATR/52W reales igual.
+            ind_daily = get_technical_indicators(ticker, df_daily)
+            if not ind_daily:
                 return self._safe_report(ticker, "Sin datos de precio disponibles")
 
-            # Indicadores diarios
-            ind_daily = compute_technical_indicators(df_daily)
             # Indicadores semanales
             ind_weekly = compute_technical_indicators(df_weekly) if not df_weekly.empty else {}
 

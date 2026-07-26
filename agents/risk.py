@@ -5,7 +5,10 @@ stop técnico, target y sizing sugerido. Actúa como multiplicador del score.
 import numpy as np
 
 from agents.base import BaseAgent, AgentReport
-from data.market_data import get_price_history, compute_technical_indicators, get_company_info
+from data.market_data import (
+    get_price_history, compute_technical_indicators,
+    get_technical_indicators, get_risk_levels, get_company_info,
+)
 
 
 SYSTEM_PROMPT = """Eres el Risk Manager de un hedge fund de élite especializado en HOLD DE CALIDAD A LARGO PLAZO.
@@ -88,10 +91,13 @@ class RiskAgent(BaseAgent):
         try:
             df = get_price_history(ticker, period="1y")
             info = get_company_info(ticker)
-            ind = compute_technical_indicators(df) if not df.empty else {}
+            # Indicadores con respaldo TradingView: si el OHLCV viene vacío o
+            # corrupto (cloud), get_technical_indicators cae a TradingView y
+            # devuelve precio/ATR/52W/target reales → el riesgo se calcula igual.
+            ind = get_technical_indicators(ticker, df)
 
             # Calcular métricas cuantitativas de riesgo pre-análisis
-            risk_metrics = self._compute_risk_metrics(df, ind, info)
+            risk_metrics = self._compute_risk_metrics(df, ind, info, ticker)
 
             # Versión SIN IA: scoring por código (no gasta créditos de API)
             from agents.code_engine import score_risk
@@ -127,10 +133,33 @@ class RiskAgent(BaseAgent):
         except Exception as e:
             return self._safe_report(ticker, str(e))
 
-    def _compute_risk_metrics(self, df, ind, info) -> dict:
+    def _compute_risk_metrics(self, df, ind, info, ticker=None) -> dict:
         """Pre-calcula métricas cuantitativas para el agente."""
         metrics = {}
-        if df.empty or not ind:
+
+        # Respaldo en la nube: si el OHLCV vino vacío (Yahoo/Nasdaq bloqueados),
+        # pero hay indicadores de TradingView, se calculan los niveles de riesgo
+        # con la MISMA metodología (stop swing/ATR, target analista/52W) desde ind.
+        if df.empty:
+            if not ind:
+                return metrics
+            lv = get_risk_levels(ticker, ind)
+            if not lv:
+                return metrics
+            price = lv["current_price"]
+            metrics["current_price"] = price
+            metrics["atr_pct"] = lv["atr_pct"]
+            metrics["atr"] = round(price * lv["atr_pct"] / 100, 2)
+            metrics["swing_low_10w"] = ind.get("low_3m") or lv["stop"]
+            metrics["stop_suggested"] = lv["stop"]
+            metrics["target_suggested"] = lv["target"]
+            metrics["risk_pct"] = lv["risk_pct"]
+            metrics["reward_pct"] = lv["reward_pct"]
+            metrics["rr_ratio"] = lv["rr"]
+            metrics["beta"] = info.get("beta") or 1.0
+            return metrics
+
+        if not ind:
             return metrics
 
         close = df["Close"]
@@ -161,15 +190,7 @@ class RiskAgent(BaseAgent):
         else:
             metrics["rr_ratio"] = 0
 
-        # Position sizing (1% risk del portfolio por trade)
-        risk_per_share = price - metrics["stop_suggested"]
-        if risk_per_share > 0:
-            shares_per_1k_risk = 1000 / risk_per_share
-            pos_value = shares_per_1k_risk * price
-            metrics["position_size_at_1pct_risk"] = pos_value  # valor en USD para 1% de riesgo en $100K portfolio
-
         metrics["beta"] = info.get("beta") or 1.0
-        metrics["implied_portfolio_pct"] = min(round(1 / metrics["rr_ratio"] * 5, 1), 10) if metrics.get("rr_ratio", 0) > 0 else 0
 
         return metrics
 
@@ -189,7 +210,6 @@ class RiskAgent(BaseAgent):
             f"- Target Sugerido (cuantitativo): ${risk.get('target_suggested', 'N/A'):.2f}",
             f"- Upside potencial: +{risk.get('reward_pct', 0):.1f}%",
             f"- R/R Ratio (cuantitativo): {risk.get('rr_ratio', 0):.2f}:1",
-            f"- Portfolio % sugerido (cuantitativo): {risk.get('implied_portfolio_pct', 0):.1f}%",
             "",
             "## Indicadores Técnicos Relevantes",
             f"- RSI 14: {ind.get('rsi_14', 'N/A'):.1f}" if ind.get('rsi_14') else "- RSI 14: N/A",

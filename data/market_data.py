@@ -948,6 +948,173 @@ def get_relative_strength(ticker: str, benchmark: str = "SPY", period: str = "1y
     return result
 
 
+# ── Indicadores técnicos con respaldo TradingView (a prueba de bloqueos) ────
+# Estructura portada de la copia que SÍ funciona en producción: se calcula el
+# técnico desde OHLCV (yfinance → Nasdaq); si viene vacío O corrupto (Yahoo y
+# Nasdaq bloqueados/limitados en IPs de datacenter → NaN), se cae a un snapshot
+# de TradingView, que responde valores puntuales REALES en Render. Así Stage,
+# 52W, MA, RSI, ATR, target y niveles de riesgo SIEMPRE tienen datos, en
+# localhost y en producción.
+
+_TV_TECH_FIELDS = [
+    "close", "SMA20", "SMA50", "SMA100", "SMA200", "RSI", "ATR",
+    "price_52_week_high", "price_52_week_low",
+    "Perf.1M", "Perf.3M", "Perf.6M", "Perf.Y",
+    "MACD.macd", "MACD.signal", "Low.3M", "High.3M",
+    # Target de analistas (el MISMO campo que usa get_company_info, probado en
+    # Render): da un precio objetivo REAL sin depender de OHLCV.
+    "price_target_average",
+]
+
+
+def _tv_row(ticker: str) -> dict:
+    """Una fila de TradingView con campos técnicos para `ticker` (o {}).
+    Prueba el ticker tal cual y su variante con punto (clases: BRK-B→BRK.B)."""
+    variants = [ticker.upper()]
+    if "-" in ticker:
+        variants.append(ticker.upper().replace("-", "."))
+    for tk in variants:
+        try:
+            from tradingview_screener import Query, col
+            _, df = (Query().select(*_TV_TECH_FIELDS)
+                     .where(col("name") == tk).limit(1).get_scanner_data())
+            if df is not None and not df.empty:
+                return df.iloc[0].to_dict()
+        except Exception:
+            continue
+    return {}
+
+
+def _tradingview_technical_snapshot(ticker: str) -> dict:
+    """Reconstruye el dict de indicadores (mismas claves que
+    compute_technical_indicators) a partir de los valores puntuales de
+    TradingView. {} si no hay datos. NUNCA lanza.
+
+    Cachea el resultado (TTL corto): cuando técnico y riesgo caen a TradingView
+    a la vez (ambos en hilos), el 2º reutiliza el snapshot del 1º en vez de
+    duplicar la llamada al escáner (evita colisiones/rate-limit intermitentes)."""
+    key = f"tvsnap_{ticker}"
+    cached = _load_cache(key, ttl_hours=TTL_RS)
+    if cached:
+        return cached
+    r = _tv_row(ticker)
+    if not r:
+        return {}
+    try:
+        def f(k):
+            v = r.get(k)
+            try:
+                v = float(v)
+                return v if v == v else None
+            except (TypeError, ValueError):
+                return None
+
+        close = f("close")
+        if not close:
+            return {}
+        ind = {"current_price": close}
+        sma20, sma50, sma100, sma200 = f("SMA20"), f("SMA50"), f("SMA100"), f("SMA200")
+        # TradingView no expone SMA150 → se aproxima con (SMA100+SMA200)/2
+        sma150 = ((sma100 + sma200) / 2.0) if (sma100 and sma200) else None
+        for n, ma in [(20, sma20), (50, sma50), (150, sma150), (200, sma200)]:
+            ind[f"sma_{n}"] = ma
+            ind[f"price_vs_sma{n}_pct"] = ((close / ma - 1) * 100) if ma else None
+        ind["rsi_14"] = f("RSI")
+        macd, sig = f("MACD.macd"), f("MACD.signal")
+        if macd is not None:
+            ind["macd"] = macd
+            ind["macd_signal"] = sig
+            ind["macd_hist"] = (macd - sig) if sig is not None else None
+        atr = f("ATR")
+        if atr is not None:
+            ind["atr_14"] = atr
+            ind["atr_pct"] = atr / close * 100
+        hi52, lo52 = f("price_52_week_high"), f("price_52_week_low")
+        ind["52w_high"] = hi52
+        ind["52w_low"] = lo52
+        ind["pct_from_52w_high"] = ((close / hi52 - 1) * 100) if hi52 else None
+        ind["pct_from_52w_low"] = ((close / lo52 - 1) * 100) if lo52 else None
+        ind["low_3m"] = f("Low.3M")
+        ind["analyst_target"] = f("price_target_average")   # target real de analistas
+        ind["stage"] = _compute_stage(pd.Series([close]), ind)
+        for k, label in [("Perf.6M", "6m"), ("Perf.3M", "3m"), ("Perf.1M", "1m"), ("Perf.Y", "1y")]:
+            v = f(k)
+            if v is not None:
+                ind[f"return_{label}"] = v
+        ind["_source"] = "tradingview"
+        _save_cache(key, ind)
+        return ind
+    except Exception:
+        return {}
+
+
+def get_technical_indicators(ticker: str, df: pd.DataFrame = None) -> dict:
+    """Indicadores técnicos con cadena de respaldo INFALIBLE:
+    1) OHLCV (yfinance → Nasdaq) + compute_technical_indicators.
+    2) Si viene vacío o corrupto (Yahoo Y Nasdaq bloqueados/limitados en cloud)
+       → snapshot de TradingView, que sí responde en Render. Así Stage, 52W, MA,
+       RSI, ATR SIEMPRE tienen datos reales, en localhost y en producción."""
+    if df is None:
+        df = get_price_history(ticker, period="2y")
+    if df is not None and not df.empty:
+        ind = compute_technical_indicators(df)
+        # Validar que los indicadores CLAVE sean números REALES. En cloud yfinance
+        # a veces devuelve un df NO-vacío pero corrupto/incompleto → los cálculos
+        # salen NaN. Si eso pasa, caemos a TradingView (que sí responde en Render)
+        # en vez de propagar NaN. _isnum() trata NaN/inf como inválido.
+        def _isnum(x):
+            try:
+                x = float(x); return x == x and x not in (float("inf"), float("-inf"))
+            except (TypeError, ValueError):
+                return False
+        if ind and _isnum(ind.get("current_price")) and _isnum(ind.get("52w_high")) \
+                and _isnum(ind.get("sma_50")) and _isnum(ind.get("rsi_14")):
+            return ind
+    return _tradingview_technical_snapshot(ticker)
+
+
+def get_risk_levels(ticker: str, indicators: dict = None) -> dict:
+    """Niveles de riesgo (entrada/stop/target/ATR/RR) SIEMPRE calculables, con
+    la misma metodología que el agente de riesgo pero a prueba de bloqueos:
+    usa indicadores reales (OHLCV o TradingView). {} si no hay ni precio."""
+    ind = indicators or get_technical_indicators(ticker)
+    if not ind:
+        return {}
+    try:
+        price = ind.get("current_price")
+        if not price:
+            return {}
+        atr = ind.get("atr_14") or (price * 0.03)
+        hi52 = ind.get("52w_high") or (price * 1.25)
+        # Stop: mínimo reciente (Low.3M) 2% abajo, o 2×ATR bajo el precio.
+        low_ref = ind.get("low_3m")
+        stop_swing = (low_ref * 0.98) if low_ref else None
+        stop_atr = price - 2.0 * atr
+        stop = max([s for s in (stop_swing, stop_atr) if s is not None] or [stop_atr])
+        stop = min(stop, price * 0.99)   # nunca por encima del precio
+        # Target: 1º el target REAL de analistas (TradingView, funciona en Render)
+        # si implica subida; si no, el máximo de 52 semanas / +25%.
+        analyst = ind.get("analyst_target")
+        if analyst and analyst > price * 1.02:
+            target = analyst
+        else:
+            target = hi52 if price < hi52 * 0.85 else price * 1.25
+        risk = (price - stop) / price * 100
+        reward = (target - price) / price * 100
+        rr = (reward / risk) if risk > 0 else 0
+        return {
+            "current_price": round(price, 2),
+            "stop": round(stop, 2),
+            "target": round(target, 2),
+            "atr_pct": round(atr / price * 100, 2),
+            "risk_pct": round(risk, 1),
+            "reward_pct": round(reward, 1),
+            "rr": round(rr, 2),
+        }
+    except Exception:
+        return {}
+
+
 # ── Holders e institucionales ──────────────────────────────────────────────
 
 def _nasdaq_json(path: str) -> Optional[dict]:

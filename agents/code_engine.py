@@ -997,7 +997,6 @@ def score_risk(risk_metrics, info, ind):
     price = risk_metrics.get("current_price")
     stop = risk_metrics.get("stop_suggested")
     target = risk_metrics.get("target_suggested")
-    pos = risk_metrics.get("implied_portfolio_pct", 0)
     beta = risk_metrics.get("beta", info.get("beta", 1.0)) or 1.0
 
     # Risk/Reward quality (0-40)
@@ -1106,16 +1105,7 @@ def score_risk(risk_metrics, info, ind):
                 f"Es bastante sensible al mercado (beta {_num(beta,1)}): cuando el índice general se mueve, "
                 f"ella tiende a hacerlo con más fuerza, así que en un entorno turbulento puede sufrir (o "
                 f"rebotar) más que la media.")
-    # 4) Cuánto pesa realmente en la cartera (traduce el 'sizing' a dinero real).
-    if pos and risk_pct:
-        port_loss = (pos or 0) * (risk_pct or 0) / 100.0
-        loss_txt = "menos de un 0.1%" if port_loss < 0.1 else f"un {_pct(port_loss, 1)}"
-        partes.append(
-            f"Traducido a la cartera: si se destinara un {_pct(pos, 0)} del capital a esta idea y el precio "
-            f"llegara a tocar la protección, la pérdida sobre el total de la cuenta sería de {loss_txt}. Es "
-            f"una cantidad acotada —permite equivocarse sin comprometer la cartera—, siempre y cuando se "
-            f"respete la protección sin negociar con ella.")
-    # 5) Conclusión en una frase, natural.
+    # 4) Conclusión en una frase, natural.
     if rr:
         if rr >= 1.8:
             partes.append(
@@ -1147,7 +1137,6 @@ def score_risk(risk_metrics, info, ind):
             "risk_reward": f"{rr:.1f}:1",
             "max_loss_pct": _pct(-(risk_pct or 0), signed=True),
             "potential_gain_pct": _pct(reward_pct, signed=True),
-            "position_size_pct": _pct(pos, 1),
             "volatility_atr_pct": _pct(atr_pct),
         },
         "sub_scores": {

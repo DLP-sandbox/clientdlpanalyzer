@@ -1366,8 +1366,8 @@ def render_overview(analysis: StockAnalysis):
                 unsafe_allow_html=True,
             )
 
-        # ── Métricas Clave (4 KPIs premium con tooltips) ─────────
-        if any([analysis.entry_price, analysis.target_price, analysis.risk_reward, analysis.position_size_pct]):
+        # ── Métricas Clave (KPIs premium con tooltips) ───────────
+        if any([analysis.entry_price, analysis.target_price, analysis.risk_reward]):
             st.markdown('<div class="kpi-section-title">Métricas Clave</div>', unsafe_allow_html=True)
 
             # _safe_num filtra None y NaN → si el dato llegó como NaN (fetch
@@ -1378,8 +1378,6 @@ def render_overview(analysis: StockAnalysis):
             target_str = f"${_target_n:.2f}" if _target_n is not None else "—"
             rr_str     = _extract_rr_ratio(analysis.risk_reward)
             rr_num     = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
-            sizing_str = _extract_percent(analysis.position_size_pct) if analysis.position_size_pct else "—"
-            sizing_num = _safe_num(sizing_str)
 
             metrics = [
                 {
@@ -1395,12 +1393,6 @@ def render_overview(analysis: StockAnalysis):
                     "color": ("#3DD68C" if (rr_num or 0) >= 3 else
                               "#E2B25C" if (rr_num or 0) >= 2 else "#F1495F"),
                     "tooltip": "Risk/Reward Ratio — relación entre la ganancia potencial al target y la pérdida máxima al stop. Un 3:1 significa que arriesgas 1 para ganar 3. Mínimo aceptable para operar: 2:1. El color del valor indica si supera el umbral (verde ≥3, amarillo ≥2, rojo <2).",
-                },
-                {
-                    "icon": "📐", "label": "Sizing", "value": sizing_str,
-                    "color": ("#F1495F" if (sizing_num or 0) == 0 else
-                              "#9D8CE0"),
-                    "tooltip": "Position Sizing — porcentaje del portafolio sugerido. Calculado vía Kelly Criterion modificado. 0% indica que el sistema recomienda NO operar (R/R insuficiente).",
                 },
             ]
 
