@@ -1290,6 +1290,91 @@ def _extract_percent(value):
     return _clean_tile_value(value)
 
 
+def _live_risk_levels(analysis):
+    """(precio_actual, protección, objetivo) EN VIVO — la MISMA lógica y las
+    MISMAS fuentes que la pestaña de Riesgo y la gráfica R/R: precio en vivo
+    (get_company_info) + niveles del análisis con respaldo get_risk_levels
+    (OHLCV/TradingView). Cualquiera puede ser None si no hay datos."""
+    from data.market_data import get_company_info, get_risk_levels
+    info_live = get_company_info(analysis.ticker) or {}
+    price  = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
+    stop   = _safe_num(analysis.stop_loss)
+    target = _safe_num(analysis.target_price) or _safe_num(info_live.get("target_price"))
+    if price is None or stop is None or target is None:
+        fr = get_risk_levels(analysis.ticker)
+        if fr:
+            price  = price  or fr.get("current_price")
+            stop   = stop   or fr.get("stop")
+            target = target or fr.get("target")
+    return price, stop, target
+
+
+def _asymmetry_view(analysis):
+    """Recalcula la asimetría REAL desde el precio actual, el objetivo y la
+    protección EN VIVO — los MISMOS tres números que muestra la pestaña de
+    Riesgo. Antes se leía un valor persistido del análisis que (a) solo detectaba
+    la asimetría al alza y (b) podía contradecir lo que se ve en Riesgo.
+
+        subida (upside)   = (objetivo − precio) / precio
+        caída  (downside) = (precio − protección) / precio
+        rr = subida / caída   ( >1 favorece al alza; <1 favorece la caída )
+
+    Devuelve un dict listo para pintar, o None si no hay tres niveles válidos
+    (entonces el render cae a los valores persistidos). NUNCA lanza."""
+    try:
+        price, stop, target = _live_risk_levels(analysis)
+    except Exception:
+        return None
+    if not (price and stop and target) or not (stop < price < target):
+        return None
+    up   = (target - price) / price * 100.0
+    down = (price - stop)   / price * 100.0
+    if down <= 0:
+        return None
+    rr = up / down
+    # Bandas SIMÉTRICAS alrededor de rr=1: una diferencia material en CUALQUIER
+    # dirección (subida>caída o caída>subida) se marca como asimetría real. La
+    # banda "equilibrado" es estrecha (±15%) para no tapar asimetrías reales.
+    if   rr >= 2.5:  direction, strength = "alcista", "fuerte"
+    elif rr >= 1.5:  direction, strength = "alcista", "moderado"
+    elif rr >= 1.15: direction, strength = "alcista", "débil"
+    elif rr >  0.87: direction, strength = "equilibrado", "moderado"
+    elif rr >  0.67: direction, strength = "bajista", "débil"
+    elif rr >  0.40: direction, strength = "bajista", "moderado"
+    else:            direction, strength = "bajista", "fuerte"
+
+    if direction == "alcista":
+        icon, title = "📈", "Asimetría al Alza"
+        body = (f"El potencial de subida hasta el objetivo (<span class='em'>+{up:.1f}%</span>) "
+                f"supera al riesgo de caída hasta la protección (<span class='em'>−{down:.1f}%</span>): "
+                f"una relación de <span class='em'>{rr:.1f} a 1</span> a favor. La recompensa esperada "
+                f"compensa el riesgo asumido en el punto actual.")
+        alpha = (f"Relación favorable: por cada 1% que se arriesga hasta la protección hay "
+                 f"<b>~{rr:.1f}%</b> de recorrido potencial hasta el objetivo "
+                 f"(<b>+{up:.1f}%</b> arriba frente a <b>−{down:.1f}%</b> abajo). La ventaja está en el "
+                 f"precio de entrada actual.")
+    elif direction == "bajista":
+        inv = (down / up) if up else 0.0
+        icon, title = "📉", "Asimetría a la Baja"
+        body = (f"El riesgo de caída hasta la protección (<span class='em'>−{down:.1f}%</span>) "
+                f"supera al potencial de subida hasta el objetivo (<span class='em'>+{up:.1f}%</span>): "
+                f"se arriesga <span class='em'>{inv:.1f}</span> por cada 1 de recorrido al alza. La "
+                f"recompensa actual no compensa el riesgo.")
+        alpha = (f"Hoy la relación juega en contra: la caída potencial (<b>−{down:.1f}%</b>) es mayor que "
+                 f"la subida potencial (<b>+{up:.1f}%</b>). Conviene esperar a un mejor punto de entrada "
+                 f"que ofrezca una relación más favorable antes de tomar posición.")
+    else:
+        icon, title = "⚖️", "Riesgo Equilibrado"
+        body = (f"El potencial de subida (<span class='em'>+{up:.1f}%</span>) y el riesgo de caída "
+                f"(<span class='em'>−{down:.1f}%</span>) están muy parejos (relación "
+                f"<span class='em'>{rr:.1f} a 1</span>). No hay una ventaja de asimetría de precio marcada.")
+        alpha = (f"Subida y caída potenciales están parejas (<b>+{up:.1f}%</b> vs <b>−{down:.1f}%</b>). "
+                 f"La ventaja no está en la asimetría de precio, sino en la calidad estructural del "
+                 f"negocio y el horizonte temporal.")
+    return {"direction": direction, "strength": strength, "icon": icon, "title": title,
+            "body": body, "alpha": alpha, "upside": up, "downside": down, "rr": rr}
+
+
 # ── Overview Tab ──────────────────────────────────────────────────────────
 def render_overview(analysis: StockAnalysis):
     # Fila 1: Gauge (tacómetro) + Snowflake (radar), lado a lado y bien
@@ -1475,48 +1560,66 @@ def render_overview(analysis: StockAnalysis):
             st.markdown(f'<div class="signal-card-row">{_sr_cards}</div>',
                         unsafe_allow_html=True)
 
-        # ── Card NUEVA: Diagnóstico de Asimetría (upside / downside / balanced) ─
-        asym_dir = getattr(analysis, "asymmetry_direction", None)
-        asym_str = getattr(analysis, "asymmetry_strength", None)
-        if asym_dir in ("alcista", "bajista", "equilibrado"):
-            asym_config = {
-                "alcista": {
-                    "icon": "📈", "title": "Asimetría al Alza",
-                    "body": "El <span class='em'>potencial alcista supera materialmente al riesgo bajista</span>. La situación actual favorece tomar posición — la recompensa esperada justifica el riesgo asumido.",
-                },
-                "bajista": {
-                    "icon": "📉", "title": "Asimetría a la Baja",
-                    "body": "El <span class='em'>riesgo bajista supera al potencial alcista</span>. La recompensa actual NO compensa el riesgo. Esperar mejor punto de entrada o evitar la posición.",
-                },
-                "equilibrado": {
-                    "icon": "⚖️", "title": "Riesgo Equilibrado",
-                    "body": "El <span class='em'>potencial alcista y el riesgo bajista son similares</span>. No hay ventaja clara de asimetría — la decisión debe basarse en la calidad estructural del negocio y el horizonte temporal.",
-                },
-            }[asym_dir]
-            strength_label = ""
-            if asym_str:
-                strength_es = {"fuerte": "FUERTE", "moderado": "MODERADA", "débil": "DÉBIL"}.get(asym_str, asym_str.upper())
-                strength_label = f'<span class="asymmetry-strength">{strength_es}</span>'
+        # ── Diagnóstico de Asimetría — RECALCULADO EN VIVO desde el precio
+        #    actual, el objetivo y la protección (los MISMOS tres números que
+        #    muestra la pestaña de Riesgo). Detecta la asimetría en AMBAS
+        #    direcciones (subida>caída y caída>subida) y con cifras reales. ─────
+        _strength_es = {"fuerte": "FUERTE", "moderado": "MODERADA", "débil": "LEVE"}
+        _av = _asymmetry_view(analysis)
+        if _av is not None:
+            _s = _strength_es.get(_av["strength"], _av["strength"].upper())
             st.markdown(f"""
-            <div class="asymmetry-card {asym_dir}">
+            <div class="asymmetry-card {_av['direction']}">
                 <div class="asymmetry-header">
-                    <span class="asymmetry-icon">{asym_config['icon']}</span>
-                    <span class="asymmetry-title">{asym_config['title']}</span>
-                    {strength_label}
+                    <span class="asymmetry-icon">{_av['icon']}</span>
+                    <span class="asymmetry-title">{_av['title']}</span>
+                    <span class="asymmetry-strength">{_s}</span>
                 </div>
-                <div class="asymmetry-body">{asym_config['body']}</div>
+                <div class="asymmetry-body">{_av['body']}</div>
             </div>
             """, unsafe_allow_html=True)
+        else:
+            # Respaldo: sin tres niveles en vivo, usa el diagnóstico persistido.
+            asym_dir = getattr(analysis, "asymmetry_direction", None)
+            asym_str = getattr(analysis, "asymmetry_strength", None)
+            if asym_dir in ("alcista", "bajista", "equilibrado"):
+                asym_config = {
+                    "alcista": {"icon": "📈", "title": "Asimetría al Alza",
+                        "body": "El <span class='em'>potencial alcista supera materialmente al riesgo bajista</span>. La situación actual favorece tomar posición — la recompensa esperada justifica el riesgo asumido."},
+                    "bajista": {"icon": "📉", "title": "Asimetría a la Baja",
+                        "body": "El <span class='em'>riesgo bajista supera al potencial alcista</span>. La recompensa actual NO compensa el riesgo. Esperar mejor punto de entrada o evitar la posición."},
+                    "equilibrado": {"icon": "⚖️", "title": "Riesgo Equilibrado",
+                        "body": "El <span class='em'>potencial alcista y el riesgo bajista son similares</span>. No hay ventaja clara de asimetría — la decisión debe basarse en la calidad estructural del negocio y el horizonte temporal."},
+                }[asym_dir]
+                strength_label = ""
+                if asym_str:
+                    strength_label = f'<span class="asymmetry-strength">{_strength_es.get(asym_str, asym_str.upper())}</span>'
+                st.markdown(f"""
+                <div class="asymmetry-card {asym_dir}">
+                    <div class="asymmetry-header">
+                        <span class="asymmetry-icon">{asym_config['icon']}</span>
+                        <span class="asymmetry-title">{asym_config['title']}</span>
+                        {strength_label}
+                    </div>
+                    <div class="asymmetry-body">{asym_config['body']}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-        # ── Oportunidad Asimétrica (card premium — se mantiene intacta) ──
-        if analysis.alpha_opportunity and analysis.alpha_opportunity != "No identificada":
+        # ── Oportunidad Asimétrica — interpretación accionable con las cifras
+        #    reales (mismos niveles). Si no hay niveles en vivo, cae al texto
+        #    persistido del orquestador. ─────────────────────────────────────
+        _alpha_txt = (_av["alpha"] if _av is not None else
+                      (analysis.alpha_opportunity
+                       if analysis.alpha_opportunity and analysis.alpha_opportunity != "No identificada"
+                       else None))
+        if _alpha_txt:
             st.markdown(f"""
             <div class="alpha-opportunity-card">
                 <div class="alpha-opportunity-header">
                     <span class="alpha-opportunity-icon">⚡</span>
                     <span class="alpha-opportunity-title">Oportunidad Asimétrica</span>
                 </div>
-                <div class="alpha-opportunity-body">{analysis.alpha_opportunity}</div>
+                <div class="alpha-opportunity-body">{_alpha_txt}</div>
             </div>
             """, unsafe_allow_html=True)
 
