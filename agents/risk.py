@@ -171,10 +171,12 @@ class RiskAgent(BaseAgent):
         metrics["atr"] = atr
         metrics["atr_pct"] = atr / price * 100
 
-        # Stop técnico: mínimo de las últimas 10 semanas
+        # Stop técnico: mínimo de las últimas 10 semanas, pero NUNCA por encima
+        # del precio actual (si la acción acaba de desplomarse, el swing low
+        # puede quedar sobre el precio) → tope a ~1% bajo el precio.
         low_10w = float(df["Low"].tail(50).min())
         metrics["swing_low_10w"] = low_10w
-        metrics["stop_suggested"] = round(low_10w * 0.98, 2)  # 2% bajo el swing low
+        metrics["stop_suggested"] = min(round(low_10w * 0.98, 2), round(price * 0.99, 2))
         metrics["risk_pct"] = (price - metrics["stop_suggested"]) / price * 100
 
         # Resistencia: 52W high o 25% arriba del precio

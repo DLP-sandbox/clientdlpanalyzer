@@ -1426,6 +1426,12 @@ def _live_risk_levels(analysis):
             price  = price  or fr.get("current_price")
             stop   = stop   or fr.get("stop")
             target = target or fr.get("target")
+    # La protección NUNCA por encima del precio actual: si la acción cayó por
+    # debajo del stop guardado en el análisis (p.ej. ORCL tras un desplome), se
+    # reancla ~1% bajo el precio VIVO — sin esto el R/R y la asimetría salían
+    # invertidos ("mínimo" por encima del precio actual, sin sentido).
+    if price and stop and stop >= price * 0.99:
+        stop = round(price * 0.99, 2)
     return price, stop, target
 
 
@@ -1594,6 +1600,10 @@ def render_overview(analysis: StockAnalysis):
                     _current_price = _current_price or _fr.get("current_price")
                     _target = _target or _fr.get("target")
                     _stop   = _stop   or _fr.get("stop")
+            # La protección NUNCA por encima del precio vivo: si la acción cayó
+            # bajo el stop guardado, se reancla ~1% bajo el precio actual.
+            if _current_price and _stop and _stop >= _current_price * 0.99:
+                _stop = round(_current_price * 0.99, 2)
             # R/R calculado desde el PRECIO ACTUAL en vivo — IDÉNTICO a la pestaña
             # de Riesgo (antes leía analysis.risk_reward, calculado sobre una
             # entrada hipotética distinta → discrepaba con la pestaña de Riesgo).
@@ -2946,6 +2956,13 @@ def render_risk(analysis: StockAnalysis):
             stop_lvl      = stop_lvl      or _fresh.get("stop")
             target_lvl    = target_lvl    or _fresh.get("target")
             vol           = vol           or _fresh.get("atr_pct")
+
+    # La protección NUNCA por encima del precio actual: si la acción cayó por
+    # debajo del stop guardado en el análisis (p.ej. ORCL), se reancla ~1% bajo
+    # el precio VIVO — sin esto la "Pérdida Máxima" salía positiva y el R/R y
+    # la gráfica Upside/Downside quedaban invertidos.
+    if current_price and stop_lvl and stop_lvl >= current_price * 0.99:
+        stop_lvl = round(current_price * 0.99, 2)
 
     downside = None
     upside = None
