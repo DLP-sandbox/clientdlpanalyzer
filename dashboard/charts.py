@@ -274,6 +274,37 @@ def _score_color(s) -> str:
     return "#F1495F"       # --neg
 
 
+def _thermo_rgba(x: float, alpha: float = 0.15, stops=None) -> str:
+    """Color CONTINUO del termómetro en x∈[0,100] → 'rgba(r,g,b,a)'.
+    Interpola linealmente entre los stops (por defecto los umbrales de
+    _score_color) para poder pintar arcos con gradiente suave — textura de
+    instrumento, no zonas planas ni LEDs."""
+    stops = stops or [
+        (0,   (241, 73, 95)),    # rojo
+        (35,  (224, 133, 78)),   # naranja
+        (50,  (226, 178, 92)),   # ámbar
+        (65,  (99, 223, 163)),   # verde claro
+        (80,  (61, 214, 140)),   # verde
+        (100, (61, 214, 140)),
+    ]
+    x = max(stops[0][0], min(stops[-1][0], float(x)))
+    for (x0, c0), (x1, c1) in zip(stops, stops[1:]):
+        if x <= x1:
+            t = 0.0 if x1 == x0 else (x - x0) / (x1 - x0)
+            r, g, b = (round(c0[i] + (c1[i] - c0[i]) * t) for i in range(3))
+            return f"rgba({r},{g},{b},{alpha})"
+    r, g, b = stops[-1][1]
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _gauge_gradient_steps(n: int = 60, alpha: float = 0.16, stops=None) -> list:
+    """Fondo del arco de un gauge como gradiente CONTINUO (n micro-pasos sin
+    hueco → se lee como un degradado, no como segmentos)."""
+    w = 100.0 / n
+    return [{"range": [i * w, (i + 1) * w],
+             "color": _thermo_rgba((i + 0.5) * w, alpha, stops)} for i in range(n)]
+
+
 def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560) -> go.Figure:
     """
     Versión simplificada: una sola línea de precio de cierre con un degradado
@@ -415,25 +446,21 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
             "axis": {
                 "range": [0, 100],
                 "tickwidth": 1,
-                "tickcolor": "rgba(255,255,255,0.28)",
+                "tickcolor": "rgba(255,255,255,0.30)",
                 "ticklen": 6,
                 "tickfont": {"color": MUTED, "size": 8.5, "family": "JetBrains Mono"},
                 "dtick": 20,
             },
-            # Arco del score: FINO y centrado en el anillo — las bandas tenues
-            # del termómetro respiran a ambos lados (look instrumental).
-            "bar": {"color": sc, "thickness": 0.22},
-            "bgcolor": "#0C0E12",
-            "borderwidth": 0,
-            # Bandas termómetro alineadas EXACTAMENTE con _score_color, con
-            # alphas bajas: contexto, no decoración.
-            "steps": [
-                {"range": [0, 35],   "color": "rgba(241,73,95,0.11)"},    # rojo
-                {"range": [35, 50],  "color": "rgba(224,133,78,0.09)"},   # naranja
-                {"range": [50, 65],  "color": "rgba(226,178,92,0.09)"},   # ámbar
-                {"range": [65, 80],  "color": "rgba(99,223,163,0.09)"},   # verde claro
-                {"range": [80, 100], "color": "rgba(61,214,140,0.12)"},   # verde
-            ],
+            # Arco del score sobre el degradado de fondo — presencia sin gritar.
+            "bar": {"color": sc, "thickness": 0.30},
+            # Anillo con cuerpo (más claro que el panel) + BORDE fino dorado:
+            # el dial queda enmarcado, como un instrumento real.
+            "bgcolor": "#0D1015",
+            "borderwidth": 1,
+            "bordercolor": "rgba(226,178,92,0.22)",
+            # TEXTURA: degradado térmico CONTINUO (60 micro-pasos) — se lee como
+            # un barrido rojo→ámbar→verde suave bajo el arco, sin zonas planas.
+            "steps": _gauge_gradient_steps(n=60, alpha=0.16),
             # Aguja: marca blanca fina en el score exacto.
             "threshold": {
                 "line": {"color": WHITE, "width": 2},
@@ -513,13 +540,14 @@ def build_snowflake(snowflake: dict) -> go.Figure:
 
     fig = go.Figure()
 
-    # Área de fondo (escala máxima) — disco apenas visible sobre el panel negro
+    # Área de fondo (escala máxima) — disco CON PRESENCIA sobre el panel negro:
+    # el pentágono de referencia debe VERSE (fondo + contorno definidos).
     fig.add_trace(go.Scatterpolar(
         r=[20] * len(combined_closed),
         theta=combined_closed,
         fill="toself",
-        fillcolor="rgba(255,255,255,0.02)",
-        line=dict(color=GRID, width=1),
+        fillcolor="rgba(255,255,255,0.045)",
+        line=dict(color="rgba(255,255,255,0.16)", width=1.4),
         showlegend=False,
         hoverinfo="skip",
     ))
@@ -554,18 +582,18 @@ def build_snowflake(snowflake: dict) -> go.Figure:
             # domain simétrico → el radar queda CENTRADO en su tarjeta (antes se
             # veía desplazado a la izquierda). Un pelín más grande con más height.
             domain={"x": [0.0, 1.0], "y": [0.0, 1.0]},
-            bgcolor=PANEL_BG,
+            bgcolor="#0B0D11",          # disco algo más claro que el panel: se VE
             radialaxis=dict(
                 range=[0, 22],
                 showticklabels=False,   # Sin 5/10/15/20 — el valor está en el angular label
                 showline=False,
-                gridcolor=GRID,
-                dtick=5,                # 4 anillos hairline: lectura de escala sutil
+                gridcolor="rgba(255,255,255,0.09)",   # anillos visibles
+                dtick=5,                # 4 anillos: lectura de escala clara
             ),
             angularaxis=dict(
                 tickfont=dict(size=11, color=TEXT, family="Inter"),
-                gridcolor="rgba(255,255,255,0.04)",
-                linecolor=HAIRLINE,
+                gridcolor="rgba(255,255,255,0.07)",   # radios visibles
+                linecolor="rgba(255,255,255,0.14)",   # aro exterior definido
             ),
         ),
         paper_bgcolor=PANEL_BG,
@@ -658,16 +686,12 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     fig.add_vline(x=80, line_dash="dot", line_color=GREEN,
                   line_width=1, opacity=0.35)
 
-    # ── Panel de CALIFICACIONES a la derecha, separado por divisores ─────
-    # Divisor vertical hairline entre las barras y el panel de números.
+    # ── Panel de CALIFICACIONES a la derecha ─────────────────────────────
+    # UN solo separador: línea vertical limpia entre las barras y los números
+    # (sin divisores horizontales — recargaban el panel).
     fig.add_shape(type="line", xref="paper", x0=0.86, x1=0.86,
                   yref="y", y0=-0.5, y1=n - 0.5,
-                  line=dict(color=HAIRLINE, width=1))
-    # Separadores horizontales del panel (enmarcan cada calificación).
-    for i in range(n - 1):
-        fig.add_shape(type="line", xref="paper", x0=0.875, x1=0.995,
-                      yref="y", y0=i + 0.5, y1=i + 0.5,
-                      line=dict(color="rgba(255,255,255,0.05)", width=1))
+                  line=dict(color="rgba(255,255,255,0.12)", width=1))
     # Número grande en mono tabular, color del termómetro, "/100" tenue.
     for i, s in enumerate(scores):
         fig.add_annotation(
@@ -936,16 +960,12 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
 
     if color_by_score:
         # ── Panel de CALIFICACIONES a la derecha (mismo lenguaje que el
-        # Desglose del Overview): divisor vertical hairline + separadores por
-        # fila + número grande en mono coloreado por el termómetro. ──────────
+        # Desglose del Overview): UN solo separador vertical limpio + número
+        # grande en mono coloreado por el termómetro. ─────────────────────────
         _n = len(labels)
         fig.add_shape(type="line", xref="paper", x0=0.84, x1=0.84,
                       yref="y", y0=-0.5, y1=_n - 0.5,
-                      line=dict(color=HAIRLINE, width=1))
-        for _i in range(_n - 1):
-            fig.add_shape(type="line", xref="paper", x0=0.855, x1=0.995,
-                          yref="y", y0=_i + 0.5, y1=_i + 0.5,
-                          line=dict(color="rgba(255,255,255,0.05)", width=1))
+                      line=dict(color="rgba(255,255,255,0.12)", width=1))
         for _i, _v in enumerate(values):
             fig.add_annotation(
                 xref="paper", x=0.995, xanchor="right",
@@ -1077,19 +1097,24 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
                "font": {"size": 12, "color": MUTED, "family": "JetBrains Mono"}},
         gauge={
             "axis": {"range": [0, 100], "tickwidth": 1,
-                     "tickcolor": "rgba(255,255,255,0.28)", "ticklen": 6,
+                     "tickcolor": "rgba(255,255,255,0.30)", "ticklen": 6,
                      "tickfont": {"size": 8, "color": MUTED, "family": "JetBrains Mono"},
                      "dtick": 25},
-            "bar": {"color": color, "thickness": 0.22},
-            "bgcolor": "#0C0E12",
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0, 30],   "color": "rgba(241,73,95,0.11)"},
-                {"range": [30, 45],  "color": "rgba(226,178,92,0.09)"},
-                {"range": [45, 55],  "color": "rgba(111,163,224,0.05)"},
-                {"range": [55, 75],  "color": "rgba(99,223,163,0.09)"},
-                {"range": [75, 100], "color": "rgba(61,214,140,0.12)"},
-            ],
+            "bar": {"color": color, "thickness": 0.30},
+            # Mismo acabado que el dial principal: anillo con cuerpo + borde fino.
+            "bgcolor": "#0D1015",
+            "borderwidth": 1,
+            "bordercolor": "rgba(226,178,92,0.22)",
+            # Degradado térmico CONTINUO del sentimiento: oso→neutral→toro
+            # (rojo→ámbar→azul→verde), textura suave bajo el arco.
+            "steps": _gauge_gradient_steps(n=60, alpha=0.15, stops=[
+                (0,   (241, 73, 95)),    # muy bearish
+                (30,  (226, 178, 92)),   # bearish
+                (48,  (111, 163, 224)),  # neutral (azul)
+                (58,  (99, 223, 163)),   # bullish suave
+                (75,  (61, 214, 140)),   # bullish
+                (100, (61, 214, 140)),
+            ]),
             # Aguja fina en el valor exacto (coherente con el gauge principal).
             "threshold": {
                 "line": {"color": WHITE, "width": 2},
