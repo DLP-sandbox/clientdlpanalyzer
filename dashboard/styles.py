@@ -535,11 +535,11 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
    sidebar para que el texto se lea bien; sombra sutil oscura para dar profundidad
    sin teñir los colores del logo. */
 .sidebar-brand-img {
-    display: block;
-    width: 100%;
-    max-width: 180px;
-    height: auto;
-    margin: 2px auto 0;
+    display: block !important;
+    width: 126px !important;        /* ~30% más pequeño (antes 180px) */
+    max-width: 88% !important;
+    height: auto !important;
+    margin: 30px auto 0 !important; /* bajado para no solaparse con el botón « */
     filter: drop-shadow(0 2px 7px rgba(0, 0, 0, 0.55));
 }
 
