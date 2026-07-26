@@ -11,6 +11,11 @@ from plotly.subplots import make_subplots
 # Plotly no entiende var(--x): estos hex DEBEN coincidir con :root de styles.py.
 BG_MAIN  = "#0A0B0D"                     # --bg
 BG_CARD  = "#101216"                     # --surface-1
+# Panel "instrumento": negro más profundo que el fondo, SOLO para las gráficas
+# de calificación (gauges, radar, breakdown, pilares) → efecto pantalla dentro
+# de su tarjeta, con contraste sutil frente al borde de la card.
+PANEL_BG = "#07080B"
+HAIRLINE = "rgba(255,255,255,0.07)"      # divisores finos del rediseño
 GRID     = "rgba(255,255,255,0.05)"      # rejilla casi invisible (Tufte)
 TEXT     = "#C9CDD3"                     # --text
 MUTED    = "#8D949E"                     # --text-2
@@ -387,66 +392,72 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
         "WATCH":      "#E2B25C",
         "PASS":       "#F1495F",
     }
-    color = rec_colors.get(recommendation, "#E2B25C")
+    rec_color = rec_colors.get(recommendation, "#E2B25C")
+    # El arco y el número usan el color del TERMÓMETRO del score (fuente única
+    # _score_color); el veredicto conserva su propio color semántico.
+    sc = _score_color(score)
 
     # Gauge SIN número — el arco vive en la parte superior de la figura
     # (domain y=[0.32, 1.0]) dejando espacio limpio abajo para el número.
+    # Estética "instrumento de precisión": arco FINO sobre un anillo casi negro,
+    # bandas termómetro muy tenues alineadas con los umbrales de _score_color
+    # (35/50/65/80), ticks hairline en mono y aguja blanca fina. Sobrio, sin glow.
     fig = go.Figure(go.Indicator(
         mode="gauge",
         value=score,
         domain={"x": [0, 1], "y": [0.32, 1.0]},
         title={
-            "text": f"<b>DLP SCORE</b><br><span style='font-size:0.7em;color:{color}'>{recommendation}</span>",
-            "font": {"size": 14, "color": TEXT},
+            "text": (f"<span style='color:{MUTED}'>DLP SCORE</span><br>"
+                     f"<span style='font-size:0.68em;color:{rec_color}'><b>{recommendation}</b></span>"),
+            "font": {"size": 13, "color": MUTED, "family": "JetBrains Mono"},
         },
         gauge={
             "axis": {
                 "range": [0, 100],
                 "tickwidth": 1,
-                "tickcolor": MUTED,
-                "tickfont": {"color": MUTED, "size": 9},
+                "tickcolor": "rgba(255,255,255,0.28)",
+                "ticklen": 6,
+                "tickfont": {"color": MUTED, "size": 8.5, "family": "JetBrains Mono"},
                 "dtick": 20,
             },
-            # Barra de la calificación (fill hasta el score): fina y centrada en
-            # el anillo, para que las zonas de color asomen por los bordes.
-            "bar": {"color": color, "thickness": 0.34},
-            "bgcolor": BG_CARD,
+            # Arco del score: FINO y centrado en el anillo — las bandas tenues
+            # del termómetro respiran a ambos lados (look instrumental).
+            "bar": {"color": sc, "thickness": 0.22},
+            "bgcolor": "#0C0E12",
             "borderwidth": 0,
-            # Fondo tipo termómetro (igual criterio que el gauge de Sentimiento):
-            # rojo = calificación baja, ámbar = intermedia, verde = alta. Las
-            # zonas rellenan el anillo y quedan como bandas de color en los
-            # bordes (interior y exterior) alrededor de la barra central.
+            # Bandas termómetro alineadas EXACTAMENTE con _score_color, con
+            # alphas bajas: contexto, no decoración.
             "steps": [
-                {"range": [0, 40],   "color": "rgba(241,73,95,0.22)"},    # rojo
-                {"range": [40, 55],  "color": "rgba(224,133,78,0.16)"},   # naranja
-                {"range": [55, 70],  "color": "rgba(226,178,92,0.14)"},   # ámbar
-                {"range": [70, 85],  "color": "rgba(99,223,163,0.15)"},   # verde claro
-                {"range": [85, 100], "color": "rgba(61,214,140,0.22)"},   # verde
+                {"range": [0, 35],   "color": "rgba(241,73,95,0.11)"},    # rojo
+                {"range": [35, 50],  "color": "rgba(224,133,78,0.09)"},   # naranja
+                {"range": [50, 65],  "color": "rgba(226,178,92,0.09)"},   # ámbar
+                {"range": [65, 80],  "color": "rgba(99,223,163,0.09)"},   # verde claro
+                {"range": [80, 100], "color": "rgba(61,214,140,0.12)"},   # verde
             ],
-            # Marca fina en el score exacto, discreta (mismo espíritu limpio del
-            # gauge de sentimiento pero conservando la referencia del valor).
+            # Aguja: marca blanca fina en el score exacto.
             "threshold": {
                 "line": {"color": WHITE, "width": 2},
-                "thickness": 0.9,
+                "thickness": 0.94,
                 "value": score,
             },
         },
     ))
 
     # Número grande COMO ANNOTATION SEPARADA — vive en y=0.12 (bottom 12%)
-    # debajo del arco del gauge. Imposible que se solape.
+    # debajo del arco del gauge. Imposible que se solape. Mono tabular, color
+    # del termómetro, "/100" tenue.
     fig.add_annotation(
         x=0.5, y=0.12,
         xref="paper", yref="paper",
-        text=f"<b>{score:.0f}</b><span style='font-size:0.45em;color:{MUTED}'>/100</span>",
+        text=f"<b>{score:.0f}</b><span style='font-size:0.4em;color:{MUTED}'>/100</span>",
         showarrow=False,
-        font=dict(size=44, color=color, family="JetBrains Mono"),
+        font=dict(size=52, color=sc, family="JetBrains Mono"),
         align="center",
     )
 
     fig.update_layout(
-        paper_bgcolor=BG_MAIN,
-        plot_bgcolor=BG_MAIN,
+        paper_bgcolor=PANEL_BG,
+        plot_bgcolor=PANEL_BG,
         font=dict(color=TEXT),
         height=360,   # un poco más grande dentro de su tarjeta
         # Márgenes SIMÉTRICOS → el gauge (domain x=[0,1]) y el número (x=0.5)
@@ -464,12 +475,14 @@ def build_snowflake(snowflake: dict) -> go.Figure:
     """
     Radar chart estilo SimplyWallSt: 5 dimensiones de calidad (0-20 cada una).
     """
+    # Labels SIN emoji (identidad sobria de la app: los íconos viven en los
+    # chips SVG, no dentro de las gráficas).
     categories = {
-        "value":    "💰 Valor",
-        "quality":  "🏆 Calidad",
-        "growth":   "📈 Crecimiento",
-        "momentum": "⚡ Momentum",
-        "future":   "🔭 Futuro",
+        "value":    "Valor",
+        "quality":  "Calidad",
+        "growth":   "Crecimiento",
+        "momentum": "Momentum",
+        "future":   "Futuro",
     }
 
     labels = [categories.get(k, k) for k in ["value", "quality", "growth", "momentum", "future"]]
@@ -489,24 +502,41 @@ def build_snowflake(snowflake: dict) -> go.Figure:
         fill_color = "rgba(241,73,95,0.15)"
         line_color = RED
 
-    # Labels combinados: "🏆 Calidad · 19" — el valor queda al lado del label en el outer ring
-    combined = [f"{labels[i]}  <b>{int(values[i])}</b>" for i in range(len(labels))]
+    # Labels combinados: "Calidad 15" — el valor va al lado del nombre en el
+    # outer ring, COLOREADO por su propio score (valor 0-20 → escala 0-100 →
+    # _score_color): de un vistazo se ve qué dimensión es fuerte o débil.
+    combined = [
+        f"{labels[i]}  <b><span style='color:{_score_color(values[i] * 5)}'>{int(values[i])}</span></b>"
+        for i in range(len(labels))
+    ]
     combined_closed = combined + [combined[0]]
 
     fig = go.Figure()
 
-    # Área de fondo (escala máxima)
+    # Área de fondo (escala máxima) — disco apenas visible sobre el panel negro
     fig.add_trace(go.Scatterpolar(
         r=[20] * len(combined_closed),
         theta=combined_closed,
         fill="toself",
-        fillcolor="rgba(21,24,29,0.4)",
+        fillcolor="rgba(255,255,255,0.02)",
         line=dict(color=GRID, width=1),
         showlegend=False,
         hoverinfo="skip",
     ))
 
-    # Score actual (sin texto en vértices — el valor ya está en el angular axis label)
+    # Underlay de PROFUNDIDAD (no neón): la misma silueta con trazo ancho a muy
+    # baja opacidad, debajo de la línea principal. Da cuerpo sin brillo.
+    fig.add_trace(go.Scatterpolar(
+        r=values_closed,
+        theta=combined_closed,
+        mode="lines",
+        line=dict(color=f"rgba({_hex_rgb(line_color)},0.12)", width=7),
+        fill=None,
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    # Score actual (sin texto en vértices — el valor ya está en el angular label)
     fig.add_trace(go.Scatterpolar(
         r=values_closed,
         theta=combined_closed,
@@ -514,7 +544,7 @@ def build_snowflake(snowflake: dict) -> go.Figure:
         fillcolor=fill_color,
         line=dict(color=line_color, width=2.5),
         mode="lines+markers",
-        marker=dict(size=10, color=line_color, line=dict(color=BG_MAIN, width=2)),
+        marker=dict(size=9, color=line_color, line=dict(color=PANEL_BG, width=2)),
         showlegend=False,
         hovertemplate="<b>%{theta}</b><br>Score: %{r}/20<extra></extra>",
     ))
@@ -524,26 +554,27 @@ def build_snowflake(snowflake: dict) -> go.Figure:
             # domain simétrico → el radar queda CENTRADO en su tarjeta (antes se
             # veía desplazado a la izquierda). Un pelín más grande con más height.
             domain={"x": [0.0, 1.0], "y": [0.0, 1.0]},
-            bgcolor=BG_CARD,
+            bgcolor=PANEL_BG,
             radialaxis=dict(
                 range=[0, 22],
                 showticklabels=False,   # Sin 5/10/15/20 — el valor está en el angular label
                 showline=False,
                 gridcolor=GRID,
+                dtick=5,                # 4 anillos hairline: lectura de escala sutil
             ),
             angularaxis=dict(
                 tickfont=dict(size=11, color=TEXT, family="Inter"),
-                gridcolor=GRID,
-                linecolor=GRID,
+                gridcolor="rgba(255,255,255,0.04)",
+                linecolor=HAIRLINE,
             ),
         ),
-        paper_bgcolor=BG_MAIN,
+        paper_bgcolor=PANEL_BG,
         font=dict(color=TEXT),
         height=372,
         margin=dict(l=44, r=44, t=54, b=44),
         title=dict(
             text="<b>PERFIL DE CALIDAD</b>",
-            font=dict(color=MUTED, size=11),
+            font=dict(color=MUTED, size=11, family="JetBrains Mono"),
             x=0.5,
         ),
         hoverlabel=dict(
@@ -583,27 +614,29 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     scores = [float(score_breakdown.get(k, 50)) for k in order]
 
     bar_colors = [_score_color(s) for s in scores]
+    n = len(names)
 
     fig = go.Figure()
 
-    # Zonas de calidad (background)
-    fig.add_vrect(x0=0,  x1=50,  fillcolor="rgba(241,73,95,0.04)", line_width=0)
-    fig.add_vrect(x0=50, x1=65,  fillcolor="rgba(226,178,92,0.04)", line_width=0)
-    fig.add_vrect(x0=65, x1=80,  fillcolor="rgba(111,163,224,0.04)", line_width=0)
-    fig.add_vrect(x0=80, x1=100, fillcolor="rgba(61,214,140,0.05)", line_width=0)
+    # Zonas de calidad (background) — muy tenues: contexto, no decoración
+    fig.add_vrect(x0=0,  x1=50,  fillcolor="rgba(241,73,95,0.03)", line_width=0)
+    fig.add_vrect(x0=50, x1=65,  fillcolor="rgba(226,178,92,0.03)", line_width=0)
+    fig.add_vrect(x0=65, x1=80,  fillcolor="rgba(111,163,224,0.03)", line_width=0)
+    fig.add_vrect(x0=80, x1=100, fillcolor="rgba(61,214,140,0.04)", line_width=0)
 
-    # Barras background (track gris) — para dar profundidad
+    # Barras background (riel oscuro) — para dar profundidad
     fig.add_trace(go.Bar(
         y=names,
-        x=[100] * len(names),
+        x=[100] * n,
         orientation="h",
-        marker=dict(color="rgba(21,24,29,0.4)", line=dict(width=0), cornerradius=BAR_RADIUS),
+        marker=dict(color="rgba(255,255,255,0.03)", line=dict(width=0), cornerradius=BAR_RADIUS),
         showlegend=False,
         hoverinfo="skip",
-        width=0.55,
+        width=0.5,
     ))
 
-    # Barras de score reales (encima)
+    # Barras de score reales (encima) — SIN número al final: la calificación
+    # vive en su propio panel a la derecha (más corta la barra, más limpia).
     fig.add_trace(go.Bar(
         y=names,
         x=scores,
@@ -614,12 +647,9 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
             opacity=0.92,
             cornerradius=BAR_RADIUS,
         ),
-        text=[f"<b>{s:.0f}</b>" for s in scores],
-        textposition="outside",
-        textfont=dict(size=12, color=TEXT, family="JetBrains Mono"),
         showlegend=False,
         hovertemplate="<b>%{y}</b><br>Score: %{x:.0f}/100<extra></extra>",
-        width=0.55,
+        width=0.5,
     ))
 
     # Threshold lines (dotted, sin labels intrusivos)
@@ -628,17 +658,41 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
     fig.add_vline(x=80, line_dash="dot", line_color=GREEN,
                   line_width=1, opacity=0.35)
 
+    # ── Panel de CALIFICACIONES a la derecha, separado por divisores ─────
+    # Divisor vertical hairline entre las barras y el panel de números.
+    fig.add_shape(type="line", xref="paper", x0=0.86, x1=0.86,
+                  yref="y", y0=-0.5, y1=n - 0.5,
+                  line=dict(color=HAIRLINE, width=1))
+    # Separadores horizontales del panel (enmarcan cada calificación).
+    for i in range(n - 1):
+        fig.add_shape(type="line", xref="paper", x0=0.875, x1=0.995,
+                      yref="y", y0=i + 0.5, y1=i + 0.5,
+                      line=dict(color="rgba(255,255,255,0.05)", width=1))
+    # Número grande en mono tabular, color del termómetro, "/100" tenue.
+    for i, s in enumerate(scores):
+        fig.add_annotation(
+            xref="paper", x=0.995, xanchor="right",
+            yref="y", y=i, yanchor="middle",
+            text=f"<b>{s:.0f}</b><span style='font-size:0.55em;color:{MUTED}'>/100</span>",
+            showarrow=False,
+            font=dict(size=17, color=_score_color(s), family="JetBrains Mono"),
+            align="right",
+        )
+
     fig.update_layout(
-        paper_bgcolor=BG_MAIN,
-        plot_bgcolor=BG_MAIN,
+        paper_bgcolor=PANEL_BG,
+        plot_bgcolor=PANEL_BG,
         font=dict(color=TEXT, family="Inter", size=11),
         height=380,
         barmode="overlay",
         bargap=0.25,
         xaxis=dict(
-            range=[0, 108],
+            # Barras comprimidas a la izquierda; el 14% derecho es el panel de
+            # calificaciones (domain en coords de paper, igual que las shapes).
+            domain=[0, 0.84],
+            range=[0, 102],
             gridcolor="rgba(0,0,0,0)",
-            tickfont=dict(color=MUTED, size=9),
+            tickfont=dict(color=MUTED, size=9, family="JetBrains Mono"),
             zeroline=False,
             tickvals=[0, 25, 50, 65, 80, 100],
             ticktext=["0", "25", "50", "<span style='color:#E2B25C'>65</span>", "<span style='color:#3DD68C'>80</span>", "100"],
@@ -655,7 +709,7 @@ def build_score_breakdown(score_breakdown: dict) -> go.Figure:
             y=0.97,
         ),
         showlegend=False,
-        margin=dict(l=10, r=50, t=40, b=20),
+        margin=dict(l=10, r=16, t=40, b=20),
         hovermode="y unified",
         hoverlabel=dict(bgcolor="#15181D", bordercolor="rgba(226,178,92,0.3)",
                         font=dict(size=11, family="JetBrains Mono", color=TEXT)),
@@ -866,7 +920,9 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         y=labels, x=values, orientation="h",
         marker=dict(color=colors, opacity=0.92, cornerradius=_radius,
                     line=dict(color="rgba(255,255,255,0.10)", width=1)),
-        text=text_vals, textposition="outside",
+        # En modo calificación el número NO va al final de la barra: vive en su
+        # panel derecho separado por divisores (ver más abajo).
+        text=(None if color_by_score else text_vals), textposition="outside",
         textfont=dict(size=10, color=TEXT, family="JetBrains Mono"),
         width=bar_w, showlegend=False,
         # cliponaxis=False: la etiqueta "outside" (p.ej. "+18.71%") no se recorta
@@ -878,12 +934,37 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
     if x_zero_line and not color_by_score:
         fig.add_vline(x=0, line_color=MUTED, line_width=1, opacity=0.5)
 
+    if color_by_score:
+        # ── Panel de CALIFICACIONES a la derecha (mismo lenguaje que el
+        # Desglose del Overview): divisor vertical hairline + separadores por
+        # fila + número grande en mono coloreado por el termómetro. ──────────
+        _n = len(labels)
+        fig.add_shape(type="line", xref="paper", x0=0.84, x1=0.84,
+                      yref="y", y0=-0.5, y1=_n - 0.5,
+                      line=dict(color=HAIRLINE, width=1))
+        for _i in range(_n - 1):
+            fig.add_shape(type="line", xref="paper", x0=0.855, x1=0.995,
+                          yref="y", y0=_i + 0.5, y1=_i + 0.5,
+                          line=dict(color="rgba(255,255,255,0.05)", width=1))
+        for _i, _v in enumerate(values):
+            fig.add_annotation(
+                xref="paper", x=0.995, xanchor="right",
+                yref="y", y=_i, yanchor="middle",
+                text=f"<b>{_v:.0f}</b><span style='font-size:0.55em;color:{MUTED}'>/100</span>",
+                showarrow=False,
+                font=dict(size=15, color=_score_color(_v), family="JetBrains Mono"),
+                align="right",
+            )
+
     xaxis = dict(gridcolor=GRID, tickfont=dict(color=MUTED, size=9), zerolinecolor=MUTED,
                  ticksuffix=("%" if x_format == "%" else ""))
     if color_by_score:
-        # Escala fija 0-105 para que el riel completo y las etiquetas quepan.
-        xaxis.update(range=[0, 108], gridcolor="rgba(0,0,0,0)", zeroline=False,
-                     tickvals=[0, 25, 50, 65, 80, 100])
+        # Barras comprimidas a la izquierda (el 18% derecho es el panel de
+        # calificaciones); riel completo 0→100 con ticks en los umbrales.
+        xaxis.update(domain=[0, 0.82], range=[0, 102],
+                     gridcolor="rgba(0,0,0,0)", zeroline=False,
+                     tickvals=[0, 25, 50, 65, 80, 100],
+                     tickfont=dict(color=MUTED, size=9, family="JetBrains Mono"))
     else:
         # Encuadre con holgura a AMBOS lados (positivo y negativo) para que las
         # etiquetas "outside" de las barras más largas queden completas dentro
@@ -895,15 +976,21 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         _pad = _span * 0.34
         xaxis.update(range=[_vmin - _pad, _vmax + _pad])
 
+    # Fondo/márgenes: el modo calificación usa el panel "instrumento" (más negro,
+    # sin margen derecho — el panel de números vive dentro del paper). La rama
+    # normal (MAs / Relative Strength) queda EXACTAMENTE como estaba.
+    _bg = PANEL_BG if color_by_score else BG_MAIN
+    _title_font = (dict(color=MUTED, size=11, family="JetBrains Mono")
+                   if color_by_score else dict(color=MUTED, size=11))
     fig.update_layout(
-        paper_bgcolor=BG_MAIN,
-        plot_bgcolor=BG_MAIN,
+        paper_bgcolor=_bg,
+        plot_bgcolor=_bg,
         font=dict(color=TEXT, family="Inter", size=11),
         height=height,
         showlegend=False,
         barmode="overlay",
-        margin=dict(l=10, r=60, t=40 if title else 10, b=10),
-        title=dict(text=f"<b>{title}</b>", font=dict(color=MUTED, size=11), x=0) if title else None,
+        margin=dict(l=10, r=(12 if color_by_score else 60), t=40 if title else 10, b=10),
+        title=dict(text=f"<b>{title}</b>", font=_title_font, x=0) if title else None,
         xaxis=xaxis,
         yaxis=dict(gridcolor="rgba(0,0,0,0)", tickfont=dict(color=TEXT, size=10), zerolinecolor=GRID),
         hoverlabel=dict(bgcolor="#15181D", bordercolor="rgba(226,178,92,0.3)",
@@ -982,35 +1069,46 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
         # Dominio completo (centrado garantizado) + margen amplio l/r para que
         # los ticks "0" y "100" no toquen los bordes. Así queda centrado en la
         # tarjeta y lo más grande posible sin cortarse.
+        # Mismo lenguaje "instrumento" que el gauge del DLP Score: arco fino,
+        # anillo casi negro, bandas tenues, ticks hairline mono. Sobrio.
         domain={"x": [0, 1], "y": [0.28, 1.0]},
-        title={"text": f"<b>SENTIMIENTO</b><br><span style='font-size:0.75em;color:{color}'>{label}</span>",
-               "font": {"size": 12, "color": MUTED}},
+        title={"text": (f"<span style='color:{MUTED}'>SENTIMIENTO</span><br>"
+                        f"<span style='font-size:0.72em;color:{color}'><b>{label}</b></span>"),
+               "font": {"size": 12, "color": MUTED, "family": "JetBrains Mono"}},
         gauge={
-            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": MUTED,
-                     "tickfont": {"size": 8, "color": MUTED}, "dtick": 25},
-            "bar": {"color": color, "thickness": 0.32},
-            "bgcolor": BG_CARD,
+            "axis": {"range": [0, 100], "tickwidth": 1,
+                     "tickcolor": "rgba(255,255,255,0.28)", "ticklen": 6,
+                     "tickfont": {"size": 8, "color": MUTED, "family": "JetBrains Mono"},
+                     "dtick": 25},
+            "bar": {"color": color, "thickness": 0.22},
+            "bgcolor": "#0C0E12",
             "borderwidth": 0,
             "steps": [
-                {"range": [0, 30],   "color": "rgba(241,73,95,0.18)"},
-                {"range": [30, 45],  "color": "rgba(226,178,92,0.12)"},
-                {"range": [45, 55],  "color": "rgba(111,163,224,0.06)"},
-                {"range": [55, 75],  "color": "rgba(99,223,163,0.12)"},
-                {"range": [75, 100], "color": "rgba(61,214,140,0.18)"},
+                {"range": [0, 30],   "color": "rgba(241,73,95,0.11)"},
+                {"range": [30, 45],  "color": "rgba(226,178,92,0.09)"},
+                {"range": [45, 55],  "color": "rgba(111,163,224,0.05)"},
+                {"range": [55, 75],  "color": "rgba(99,223,163,0.09)"},
+                {"range": [75, 100], "color": "rgba(61,214,140,0.12)"},
             ],
+            # Aguja fina en el valor exacto (coherente con el gauge principal).
+            "threshold": {
+                "line": {"color": WHITE, "width": 2},
+                "thickness": 0.94,
+                "value": score,
+            },
         },
     ))
     # Número GRANDE como annotation separada — nunca se solapa con el arco
     fig.add_annotation(
         x=0.5, y=0.10,
         xref="paper", yref="paper",
-        text=f"<b>{score:.0f}</b><span style='font-size:0.5em;color:{MUTED}'>/100</span>",
+        text=f"<b>{score:.0f}</b><span style='font-size:0.4em;color:{MUTED}'>/100</span>",
         showarrow=False,
-        font=dict(size=34, color=color, family="JetBrains Mono"),
+        font=dict(size=42, color=color, family="JetBrains Mono"),
         align="center",
     )
     fig.update_layout(
-        paper_bgcolor=BG_MAIN,
+        paper_bgcolor=PANEL_BG,
         font=dict(color=TEXT),
         height=height + 95,   # más grande dentro de su tarjeta
         # Márgenes SIMÉTRICOS → gauge (domain x=[0,1]) y número (x=0.5) CENTRADOS
