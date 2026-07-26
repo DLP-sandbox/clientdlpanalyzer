@@ -448,11 +448,11 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
         paper_bgcolor=BG_MAIN,
         plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=320,
-        # Mismo criterio que el gauge de sentimiento: margen asimétrico (más a
-        # la derecha) para alinearlo hacia la izquierda de su tarjeta, sin
-        # cortar los ticks "0" ni "100".
-        margin=dict(l=30, r=95, t=55, b=20),
+        height=360,   # un poco más grande dentro de su tarjeta
+        # Márgenes SIMÉTRICOS → el gauge (domain x=[0,1]) y el número (x=0.5)
+        # quedan CENTRADOS en la tarjeta. Antes un margen asimétrico (r=95) lo
+        # empujaba a la izquierda; con la tarjeta envolvente debe ir centrado.
+        margin=dict(l=50, r=50, t=54, b=16),
     )
 
     return fig
@@ -521,6 +521,9 @@ def build_snowflake(snowflake: dict) -> go.Figure:
 
     fig.update_layout(
         polar=dict(
+            # domain simétrico → el radar queda CENTRADO en su tarjeta (antes se
+            # veía desplazado a la izquierda). Un pelín más grande con más height.
+            domain={"x": [0.0, 1.0], "y": [0.0, 1.0]},
             bgcolor=BG_CARD,
             radialaxis=dict(
                 range=[0, 22],
@@ -536,8 +539,8 @@ def build_snowflake(snowflake: dict) -> go.Figure:
         ),
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=340,
-        margin=dict(l=40, r=40, t=55, b=45),
+        height=372,
+        margin=dict(l=44, r=44, t=54, b=44),
         title=dict(
             text="<b>PERFIL DE CALIDAD</b>",
             font=dict(color=MUTED, size=11),
@@ -1192,14 +1195,19 @@ def build_quick_chart(df: pd.DataFrame, ticker: str, period_days: int = 126) -> 
 
 # ── Risk/Reward Visual ────────────────────────────────────────────────────
 
-def build_rr_chart(current_price: float, stop: float, target: float, ticker: str) -> go.Figure:
+def build_rr_chart(current_price: float, stop: float, target: float, ticker: str,
+                   compact: bool = False) -> go.Figure:
     """Escalera de precios Upside/Downside desde el PRECIO ACTUAL.
 
-    Columna central con dos zonas PROPORCIONALES al recorrido de precio: verde
-    (actual→objetivo) arriba y roja (protección→actual) abajo. Como ambas alturas
-    representan el % (relativo al precio actual), la MAYOR se ve al instante y la
-    asimetría subida/caída queda evidente. Etiquetas a la derecha, una por nivel
-    (a distinta altura → nunca se solapan) y precios en el eje izquierdo."""
+    A la IZQUIERDA, una "tabla" de niveles (OBJETIVO / PRECIO ACTUAL / PROTECCIÓN
+    con su $ y su %) en posiciones FIJAS y bien separadas → NUNCA se solapan,
+    aunque dos niveles de precio estén muy cerca (antes iban ancladas al precio y
+    colisionaban). A la DERECHA, una barra con dos zonas PROPORCIONALES al
+    recorrido de precio: verde (actual→objetivo) arriba y roja (protección→actual)
+    abajo — como ambas alturas representan el %, la MAYOR se ve al instante.
+
+    compact=True → versión pequeña/cuadrada para el Overview (fuentes y barra
+    reducidas). El tab de Riesgo usa la versión normal."""
     if not all([current_price, stop, target]):
         return go.Figure()
 
@@ -1210,18 +1218,25 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
 
     span = max(target - stop, 1e-6)
     pad  = span * 0.10
-    BAR_L, BAR_R = 0.30, 0.56       # columna central
-    CX   = (BAR_L + BAR_R) / 2
-    LBL_X = 0.62                    # etiquetas a la derecha del bar
+
+    if compact:
+        height = 270
+        f_tbl, f_pct, f_title = 9.5, 13, 11
+        BAR_L, BAR_R = 0.62, 0.92
+    else:
+        height = 320
+        f_tbl, f_pct, f_title = 12, 16, 13
+        BAR_L, BAR_R = 0.66, 0.90
+    CX = (BAR_L + BAR_R) / 2
 
     fig = go.Figure()
-    # Traza fantasma para asegurar render (algunas versiones no pintan una figura
-    # solo-shapes de forma fiable); invisible y sin hover.
+    # Traza fantasma para asegurar render (una figura solo-shapes no siempre pinta
+    # de forma fiable); invisible y sin hover.
     fig.add_trace(go.Scatter(x=[CX], y=[current_price], mode="markers",
                              marker=dict(size=0.1, color="rgba(0,0,0,0)"),
                              hoverinfo="skip", showlegend=False))
 
-    # Zona de GANANCIA (verde) y de PÉRDIDA (roja) — proporcionales al precio.
+    # Barra derecha: zona de GANANCIA (verde) y de PÉRDIDA (roja), proporcionales.
     fig.add_shape(type="rect", x0=BAR_L, x1=BAR_R, y0=current_price, y1=target,
                   fillcolor="rgba(61,214,140,0.18)", line=dict(color=GREEN, width=1.2), layer="below")
     fig.add_shape(type="rect", x0=BAR_L, x1=BAR_R, y0=stop, y1=current_price,
@@ -1233,32 +1248,32 @@ def build_rr_chart(current_price: float, stop: float, target: float, ticker: str
     # % grande centrado en cada zona (solo si la zona tiene altura suficiente).
     if (target - current_price) > span * 0.09:
         fig.add_annotation(x=CX, y=(current_price + target) / 2, text=f"<b>+{upside_pct:.1f}%</b>",
-                           showarrow=False, font=dict(color=GREEN, size=16, family="JetBrains Mono"))
+                           showarrow=False, font=dict(color=GREEN, size=f_pct, family="JetBrains Mono"))
     if (current_price - stop) > span * 0.09:
         fig.add_annotation(x=CX, y=(stop + current_price) / 2, text=f"<b>−{downside_pct:.1f}%</b>",
-                           showarrow=False, font=dict(color=RED, size=16, family="JetBrains Mono"))
+                           showarrow=False, font=dict(color=RED, size=f_pct, family="JetBrains Mono"))
 
-    # Etiquetas a la derecha, una por nivel (distinta altura → no se solapan).
-    for y, col, l1, l2 in [
-        (target,        GREEN,  "▲ OBJETIVO",     f"${target:,.2f}  ·  +{upside_pct:.1f}%"),
-        (current_price, ORANGE, "● PRECIO ACTUAL", f"${current_price:,.2f}"),
-        (stop,          RED,    "▼ PROTECCIÓN",   f"${stop:,.2f}  ·  −{downside_pct:.1f}%"),
+    # TABLA a la IZQUIERDA — posiciones FIJAS en coords de "paper" (independientes
+    # del precio), muy separadas → jamás se solapan aunque stop ≈ precio actual.
+    for ypap, col, l1, l2 in [
+        (0.82, GREEN,  "▲ OBJETIVO",      f"${target:,.2f}  ·  +{upside_pct:.1f}%"),
+        (0.50, ORANGE, "● PRECIO ACTUAL", f"${current_price:,.2f}"),
+        (0.18, RED,    "▼ PROTECCIÓN",    f"${stop:,.2f}  ·  −{downside_pct:.1f}%"),
     ]:
-        fig.add_annotation(x=LBL_X, y=y, xanchor="left", yanchor="middle", align="left",
+        fig.add_annotation(xref="paper", yref="paper", x=0.02, y=ypap,
+                           xanchor="left", yanchor="middle", align="left",
                            text=f"<span style='color:{col}'>{l1}</span><br><b>{l2}</b>",
-                           showarrow=False, font=dict(color=col, size=12, family="JetBrains Mono"))
+                           showarrow=False, font=dict(color=col, size=f_tbl, family="JetBrains Mono"))
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN, plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
-        height=320, showlegend=False, dragmode=False, hovermode=False,
-        margin=dict(l=62, r=14, t=50, b=16),
+        height=height, showlegend=False, dragmode=False, hovermode=False,
+        margin=dict(l=10, r=10, t=44, b=14),
         xaxis=dict(range=[0, 1], showgrid=False, showticklabels=False, zeroline=False, fixedrange=True),
-        yaxis=dict(range=[stop - pad, target + pad], gridcolor="rgba(0,0,0,0)", zeroline=False,
-                   tickvals=[stop, current_price, target],
-                   ticktext=[f"${stop:,.0f}", f"${current_price:,.0f}", f"${target:,.0f}"],
-                   tickfont=dict(color=MUTED, size=10), fixedrange=True),
+        yaxis=dict(range=[stop - pad, target + pad], showgrid=False, showticklabels=False,
+                   zeroline=False, fixedrange=True),
         title=dict(text=f"<b>UPSIDE / DOWNSIDE</b>   ·   R/R {rr:.1f}:1",
-                   font=dict(color=rr_color, size=13), x=0.5, xanchor="center", y=0.97),
+                   font=dict(color=rr_color, size=f_title), x=0.5, xanchor="center", y=0.97),
     )
     return fig

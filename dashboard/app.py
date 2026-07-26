@@ -1578,6 +1578,17 @@ def render_overview(analysis: StockAnalysis):
                 </div>
                 """, unsafe_allow_html=True)
 
+            # ── Upside/Downside COMPACTA — justo debajo de las Métricas Clave,
+            #    aprovechando el hueco de esta columna. Usa los MISMOS niveles ya
+            #    calculados (_current_price/_stop/_target). La versión grande vive
+            #    en la pestaña de Riesgo (build_rr_chart sin compact). La propia
+            #    figura ya lleva su título "UPSIDE/DOWNSIDE · R/R", así que aquí
+            #    no se añade section-title-bar (evita el título duplicado). ──────
+            if _current_price and _stop and _target:
+                _plotly(build_rr_chart(_current_price, _stop, _target, analysis.ticker, compact=True),
+                        use_container_width=True, config={"displayModeBar": False},
+                        key=f"chart_overview_rr_{analysis.ticker}")
+
         # ── Vetos aplicados (alert box) ──────────────────────────
         if analysis.vetos_applied:
             st.markdown("""
@@ -1671,28 +1682,10 @@ def render_overview(analysis: StockAnalysis):
             </div>
             """, unsafe_allow_html=True)
 
-    # Risk/Reward visual — usando PRECIO ACTUAL de yfinance como referencia
-    from data.market_data import get_company_info, get_risk_levels
-    info_live = get_company_info(analysis.ticker) or {}
-    _ov_price  = _safe_num(info_live.get("current_price")) or _safe_num(analysis.entry_price)
-    _ov_stop   = _safe_num(analysis.stop_loss)
-    _ov_target = _safe_num(analysis.target_price)
-    # Respaldo infalible si faltan niveles (análisis cacheado con datos bloqueados)
-    if _ov_stop is None or _ov_target is None or _ov_price is None:
-        _fr = get_risk_levels(analysis.ticker)
-        if _fr:
-            _ov_price  = _ov_price  or _fr.get("current_price")
-            _ov_stop   = _ov_stop   or _fr.get("stop")
-            _ov_target = _ov_target or _fr.get("target")
-    if _ov_price and _ov_stop and _ov_target:
-        st.markdown("---")
-        # Como estaba antes: displayModeBar False. NO staticPlot — esta figura no
-        # tiene trazas (solo formas + líneas) y staticPlot la dejaba en blanco.
-        # El bloqueo de zoom/arrastre va con dragmode=False dentro de la figura.
-        fig = build_rr_chart(_ov_price, _ov_stop, _ov_target, analysis.ticker)
-        _plotly(fig, use_container_width=True,
-                        config={"displayModeBar": False},
-                        key=f"chart_overview_rr_{analysis.ticker}")
+    # (La gráfica Upside/Downside del Overview se movió a la columna izquierda,
+    # justo debajo de las Métricas Clave, en versión compacta — ver arriba en
+    # `with col_info`. Así aprovecha el hueco de esa columna y no deja espacio
+    # vacío. La versión grande sigue en la pestaña de Riesgo.)
 
 
 # ── Technical Tab ─────────────────────────────────────────────────────────
