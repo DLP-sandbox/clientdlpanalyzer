@@ -71,7 +71,13 @@ def _plotly(fig, *, config=None, **kwargs):
     cfg["displayModeBar"] = False
     cfg["scrollZoom"] = False
     cfg["doubleClick"] = False
-    st.plotly_chart(fig, config=cfg, **kwargs)
+    # Cada gráfica va dentro de una TARJETA: st.container(border=True) crea un
+    # wrapper [data-testid="stVerticalBlockBorderWrapper"] al que el CSS le da
+    # fondo/borde/sombra. La tarjeta va sobre el WRAPPER, nunca sobre el propio
+    # stPlotlyChart (poner padding ahí rompía la medición de ancho de Plotly y
+    # las gráficas se desbordaban — ver styles.py, sección de gráficas).
+    with st.container(border=True):
+        st.plotly_chart(fig, config=cfg, **kwargs)
 
 
 # ── Config de página ──────────────────────────────────────────────────────

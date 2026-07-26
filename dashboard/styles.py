@@ -2814,12 +2814,27 @@ hr {
     animation: anim-fadeIn var(--anim-slow) var(--ease-out) both;
 }
 
-/* ── 7b. (Sin tarjeta envolvente en las gráficas) ─────────────────────
-   Se quitó la tarjeta alrededor de cada gráfica Plotly: el fondo/borde/
-   padding sobre [data-testid="stPlotlyChart"] interferían con la medición
-   de ancho de Plotly (use_container_width) y las gráficas salían con un
-   ancho gigante que se desbordaba y tapaba los elementos vecinos (tiles
-   de precio/objetivo/R-R/sizing, MA/RS, Upside-Downside). */
+/* ── 7b. TARJETA ENVOLVENTE de cada gráfica ───────────────────────────
+   Cada gráfica se renderiza dentro de un st.container(border=True) (ver
+   _plotly() en app.py). La tarjeta se estiliza sobre ESE wrapper, NUNCA sobre
+   [data-testid="stPlotlyChart"]: poner fondo/borde/padding directamente sobre
+   el elemento de la gráfica rompía la medición de ancho de Plotly
+   (use_container_width) y las gráficas se desbordaban tapando a sus vecinos.
+   El :has() limita el estilo SOLO al contenedor con borde que envuelve UNA
+   gráfica (no afecta a otros st.container(border=True) del app). En Streamlit
+   1.50 ese contenedor es un [data-testid="stVerticalBlock"] con borde, cuyo
+   hijo DIRECTO es el stElementContainer de la gráfica; el `> stElementContainer`
+   evita cardar también los bloques exteriores que la contienen como descendiente
+   (nada de tarjetas anidadas). Mismas variables que .analysis-card. */
+[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] [data-testid="stPlotlyChart"]) {
+    background: var(--surface-1) !important;
+    border: 1px solid var(--hairline) !important;
+    border-radius: var(--r-md) !important;
+    box-shadow: var(--inset-hi), var(--shadow-2) !important;
+    padding: 10px 12px !important;
+    margin: 6px 0 !important;
+    overflow: hidden !important;   /* respeta el border-radius en las esquinas */
+}
 
 /* ── 8. SIDEBAR WATCHLIST — slide-in por elemento ──────────────────── */
 [data-testid="stSidebar"] [data-testid="stButton"] {
