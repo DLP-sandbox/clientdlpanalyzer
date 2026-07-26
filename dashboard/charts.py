@@ -819,7 +819,8 @@ def build_rsi_gauge(rsi: float, height: int = 200) -> go.Figure:
 
 def build_metric_bars(items: list, height: int = 220, title: str = "",
                       x_format: str = "%", x_zero_line: bool = True,
-                      color_by_score: bool = False) -> go.Figure:
+                      color_by_score: bool = False,
+                      corner_radius=None) -> go.Figure:
     """Bar chart horizontal genérico para métricas comparativas.
     items = [(label, value, color)]
 
@@ -827,7 +828,11 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
     escala del termómetro (rojo→verde, 0-100), para las barras que representan
     una CALIFICACIÓN (sub-scores). Además dibuja un riel de fondo 0→100 para
     que se lea como una barra de progreso.
+
+    corner_radius → redondeo de las barras (por defecto BAR_RADIUS). Pasar 0
+    para barras de esquinas rectas (usado en las gráficas del análisis técnico).
     """
+    _radius = BAR_RADIUS if corner_radius is None else corner_radius
     if not items:
         return go.Figure()
 
@@ -856,11 +861,14 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
 
     fig.add_trace(go.Bar(
         y=labels, x=values, orientation="h",
-        marker=dict(color=colors, opacity=0.92, cornerradius=BAR_RADIUS,
+        marker=dict(color=colors, opacity=0.92, cornerradius=_radius,
                     line=dict(color="rgba(255,255,255,0.10)", width=1)),
         text=text_vals, textposition="outside",
         textfont=dict(size=10, color=TEXT, family="JetBrains Mono"),
         width=bar_w, showlegend=False,
+        # cliponaxis=False: la etiqueta "outside" (p.ej. "+18.71%") no se recorta
+        # contra el borde del eje; se dibuja completa aunque asome del área.
+        cliponaxis=False,
         hovertemplate="<b>%{y}</b><br>%{x:.0f}<extra></extra>" if color_by_score else None,
     ))
 
@@ -873,6 +881,16 @@ def build_metric_bars(items: list, height: int = 220, title: str = "",
         # Escala fija 0-105 para que el riel completo y las etiquetas quepan.
         xaxis.update(range=[0, 108], gridcolor="rgba(0,0,0,0)", zeroline=False,
                      tickvals=[0, 25, 50, 65, 80, 100])
+    else:
+        # Encuadre con holgura a AMBOS lados (positivo y negativo) para que las
+        # etiquetas "outside" de las barras más largas queden completas dentro
+        # del marco — antes se autoescalaba justo al valor y los números se
+        # cortaban en los extremos (gráficas de MAs y Relative Strength).
+        _vmax = max(values + [0.0])
+        _vmin = min(values + [0.0])
+        _span = (_vmax - _vmin) or (abs(_vmax) or 1.0)
+        _pad = _span * 0.34
+        xaxis.update(range=[_vmin - _pad, _vmax + _pad])
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,

@@ -1662,7 +1662,8 @@ def render_technical(analysis: StockAnalysis):
                 bar_color = "#3DD68C" if pct > 0 else "#F1495F"
                 ma_items.append((f"vs SMA {n}", pct, bar_color))
         if ma_items:
-            fig_ma = build_metric_bars(ma_items, height=220, title="DISTANCIA A MOVING AVERAGES")
+            fig_ma = build_metric_bars(ma_items, height=220, title="DISTANCIA A MOVING AVERAGES",
+                                       corner_radius=0)
             st.plotly_chart(fig_ma, use_container_width=True, config={"displayModeBar": False},
                             key=f"chart_technical_mas_{analysis.ticker}")
 
@@ -1685,7 +1686,8 @@ def render_technical(analysis: StockAnalysis):
                 bar_color = "#3DD68C" if v > 0 else "#F1495F"
                 rs_items.append((label, v, bar_color))
         if rs_items:
-            fig_rs = build_metric_bars(rs_items, height=220, title="RELATIVE STRENGTH vs S&P 500")
+            fig_rs = build_metric_bars(rs_items, height=220, title="RELATIVE STRENGTH vs S&P 500",
+                                       corner_radius=0)
             st.plotly_chart(fig_rs, use_container_width=True, config={"displayModeBar": False},
                             key=f"chart_technical_rs_{analysis.ticker}")
 
@@ -3624,10 +3626,9 @@ def main():
 
     render_header()
 
-    # El botón "Volver al Home" del top-nav. Cuando hay un ticker
-    # seleccionado, ese botón sale en su propia franja horizontal más abajo
-    # en el flujo de análisis; por eso aquí solo lo mostramos cuando NO hay
-    # análisis seleccionado.
+    # El botón "Volver al Home" del top-nav solo aparece en las vistas de
+    # escaneo (resultados / configuración). En la vista de ANÁLISIS ya no hay
+    # botón superior — se usa el de la barra lateral izquierda (desplegable).
     in_welcome = (
         not st.session_state.get("selected_ticker") and
         not st.session_state.get("quick_view_ticker") and
@@ -3662,18 +3663,8 @@ def main():
 
     analysis = st.session_state.analyses[selected]
 
-    # ── Franja superior: botón Volver al Home (izquierda) ──
-    _col_home, _col_rest = st.columns([2, 5])
-    with _col_home:
-        if st.button("⌂  Volver al Home", use_container_width=True,
-                     key="topnav_home_btn"):
-            st.session_state.selected_ticker = None
-            st.session_state.quick_view_ticker = None
-            st.session_state.scan_results = []
-            st.session_state.current_scan_id = None
-            st.session_state._show_scan_results = False
-            st.session_state.scanner_config_open = False
-            st.rerun()
+    # (El botón "Volver al Home" superior se eliminó: se usa el de la barra
+    # lateral izquierda, que es desplegable. Evita duplicar la acción.)
 
     # Botón "← Volver al Scan" — visible cuando hay resultados de scan activos
     if st.session_state.scan_results:
