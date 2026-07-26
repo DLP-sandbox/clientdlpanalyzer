@@ -288,6 +288,9 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     padding: 16px 20px !important;
     letter-spacing: 0.05em !important;
     text-align: center !important;
+    /* El ticker SIEMPRE se ve en mayúscula al escribir (el valor ya se procesa
+       con .upper()). El placeholder queda exento por la regla ::placeholder. */
+    text-transform: uppercase !important;
     transition: background var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out) !important;
 }
 

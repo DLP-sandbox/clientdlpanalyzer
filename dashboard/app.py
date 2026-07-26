@@ -1637,6 +1637,13 @@ def render_technical(analysis: StockAnalysis):
 
     pct_high = _safe_num(indicators.get("pct_from_52w_high"))
     high_level = "neutral" if pct_high is None else ("good" if pct_high > -5 else "neutral" if pct_high > -15 else "bad")
+    # En máximos: el precio está a 0.0% del máximo de 52 semanas (rango > -0.05
+    # cubre el redondeo). En vez de "0.0%" se muestra "EN MÁXIMOS", encajado.
+    _at_high = pct_high is not None and pct_high > -0.05
+    high_value = "—" if pct_high is None else ("EN MÁXIMOS" if _at_high else f"{pct_high:.1f}%")
+    high_sub = ("En su máximo 52S" if _at_high else
+                "Cerca del máximo" if (pct_high is not None and pct_high > -5) else
+                "Lejos del máximo" if pct_high is not None else "sin dato")
 
     _render_status_pills([
         {"label": "Stage Minervini", "value": (f"Stage {stage}" if stage else "—"), "level": stage_level, "sub": stage_sub},
@@ -1644,8 +1651,7 @@ def render_technical(analysis: StockAnalysis):
          "sub": ("Sobrecomprado" if (rsi or 0) > 70 else "Sobrevendido" if (rsi is not None and rsi < 30) else "Neutral")},
         {"label": "MACD Hist", "value": macd_val, "level": macd_level,
          "sub": (f"{macd_hist:+.3f}" if macd_hist is not None else "sin dato")},
-        {"label": "Dist. 52W High", "value": (f"{pct_high:.1f}%" if pct_high is not None else "—"), "level": high_level,
-         "sub": ("Cerca del máximo" if (pct_high is not None and pct_high > -5) else "Lejos del máximo" if pct_high is not None else "sin dato")},
+        {"label": "Dist. 52W High", "value": high_value, "level": high_level, "sub": high_sub},
     ])
 
     # ── Performance vs MAs y vs SPY ──
