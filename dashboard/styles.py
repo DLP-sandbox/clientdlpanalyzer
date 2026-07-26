@@ -531,15 +531,16 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
     margin-bottom: 14px;
 }
 
-/* Logo del club DLP (PNG) — centrado, con un sutil brillo dorado detrás para
-   integrarlo con la identidad de la app. */
+/* Logo del club DLP (PNG "CLUB DLP" + bombilla) — ocupa casi todo el ancho del
+   sidebar para que el texto se lea bien; sombra sutil oscura para dar profundidad
+   sin teñir los colores del logo. */
 .sidebar-brand-img {
     display: block;
-    width: 128px;
-    max-width: 78%;
+    width: 100%;
+    max-width: 180px;
     height: auto;
     margin: 2px auto 0;
-    filter: drop-shadow(0 3px 10px rgba(var(--accent-rgb), 0.28));
+    filter: drop-shadow(0 2px 7px rgba(0, 0, 0, 0.55));
 }
 
 .sidebar-brand-logo {
