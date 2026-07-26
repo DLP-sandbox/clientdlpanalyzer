@@ -847,23 +847,46 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
    Analista-Mercados centra las pestañas: el tab-list solo contiene los botones
    (el panel es su hermano), así que centrar ahí no mueve el contenido. */
 button[data-baseweb="tab"] {
+    /* position: relative → ancla del separador decorativo ::after. NO cambia el
+       flujo del botón, así que no afecta el layout de las pestañas. */
+    position: relative !important;
     color: var(--text-2) !important;
     font-family: var(--font-ui) !important;
-    font-size: 0.8rem !important;
+    font-size: 0.84rem !important;              /* un pelín más grandes */
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    padding: 10px 18px !important;
+    padding: 12px 22px !important;              /* pestañas ligeramente más grandes */
     border-radius: 6px 6px 0 0 !important;
     border-bottom: 2px solid transparent !important;
-    /* Separador vertical entre pestañas: border-right (box model, robusto). */
-    border-right: 1px solid rgba(var(--accent-rgb),0.35) !important;
     background: transparent !important;
     transition: color var(--dur-2) var(--ease-out),
                 background var(--dur-2) var(--ease-out),
                 border-bottom-color var(--dur-2) var(--ease-out) !important;
 }
-button[data-baseweb="tab"]:last-child { border-right: none !important; }
+
+/* Separador DECORATIVO entre pestañas — pseudo-elemento ABSOLUTO: está FUERA del
+   flujo, así que NO ocupa espacio en el box model y NO puede aplastar ni
+   colapsar las pestañas (a diferencia de un border-right, que sí suma ancho).
+   Es una fina línea vertical con degradado que se desvanece arriba/abajo y un
+   brillo dorado suave. Puramente estético (pointer-events: none). */
+button[data-baseweb="tab"]::after {
+    content: "" !important;
+    position: absolute !important;
+    right: 0 !important;
+    top: 20% !important;
+    bottom: 20% !important;
+    width: 1px !important;
+    background: linear-gradient(to bottom, transparent 0%,
+                rgba(var(--accent-rgb),0.60) 50%, transparent 100%) !important;
+    box-shadow: 0 0 6px rgba(var(--accent-rgb),0.55),
+                0 0 2px rgba(var(--accent-rgb),0.75) !important;   /* brillo */
+    pointer-events: none !important;
+}
+/* La última pestaña no lleva separador a su derecha. Se usa :last-of-type (no
+   :last-child) porque el tab-list incluye divs de highlight/border DESPUÉS de
+   los botones → el último botón no es :last-child, pero sí :last-of-type. */
+button[data-baseweb="tab"]:last-of-type::after { display: none !important; }
 
 button[data-baseweb="tab"]:hover {
     color: var(--text-hi) !important;
