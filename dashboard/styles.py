@@ -526,9 +526,20 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 /* ── Sidebar styles ────────────────────────────────────────────────── */
 .sidebar-brand {
     text-align: center;
-    padding: 18px 0 20px;
+    padding: 14px 0 18px;
     border-bottom: 1px solid var(--hairline);
     margin-bottom: 14px;
+}
+
+/* Logo del club DLP (PNG) — centrado, con un sutil brillo dorado detrás para
+   integrarlo con la identidad de la app. */
+.sidebar-brand-img {
+    display: block;
+    width: 128px;
+    max-width: 78%;
+    height: auto;
+    margin: 2px auto 0;
+    filter: drop-shadow(0 3px 10px rgba(var(--accent-rgb), 0.28));
 }
 
 .sidebar-brand-logo {
@@ -793,12 +804,21 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 
 /* ── Score Badges: chips con punto de estado, sin degradados ─────────── */
 .badge-strong-buy, .badge-buy, .badge-watch, .badge-pass {
-    padding: 5px 12px 5px 24px;
+    padding: 5px 22px;
     border-radius: 99px;
     font-weight: 700;
     font-size: 0.66rem;
     letter-spacing: 0.09em;
-    display: inline-block;
+    /* Ancho UNIFORME en todas las etiquetas (cabe la más larga, "EN
+       OBSERVACIÓN"), con el texto CENTRADO — así todas miden igual sin importar
+       la palabra. El punto de estado va absoluto a la izquierda. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 9.2rem;
+    box-sizing: border-box;
+    text-align: center;
+    white-space: nowrap;
     font-family: var(--font-mono);
     text-transform: uppercase;
     position: relative;
@@ -853,7 +873,7 @@ button[data-baseweb="tab"] {
     font-weight: 500 !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
-    padding: 10px 18px !important;
+    padding: 10px 14px !important;   /* algo más justo: deja sitio al ícono de sección */
     border-radius: 6px 6px 0 0 !important;
     border-bottom: 2px solid transparent !important;
     /* Separador vertical entre pestañas: border-right (box model, robusto). */
@@ -1607,17 +1627,18 @@ hr {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
     border-radius: var(--r-sm);
     background: rgba(var(--accent-rgb), 0.08);
     border: 1px solid rgba(var(--accent-rgb), 0.25);
     color: var(--accent);
     font-family: var(--font-mono);
-    font-size: 0.66rem;
+    font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.04em;
     flex-shrink: 0;
+    position: relative;
 }
 
 .agent-name {
@@ -3384,19 +3405,21 @@ section[data-testid="stSidebar"] {
     padding-top: 2px;
 }
 
-/* Versión compacta de los recommendation badges (cabe en sidebar 260px) */
+/* Versión compacta de los recommendation badges (cabe en sidebar 260px). En el
+   sidebar el ancho uniforme se consigue con width:100% (rellenan su columna, que
+   es de ancho fijo) → todas idénticas; se anula el min-width del base. */
 .sb-badge-wrap .badge-strong-buy,
 .sb-badge-wrap .badge-buy,
 .sb-badge-wrap .badge-watch,
 .sb-badge-wrap .badge-pass {
-    /* padding-left amplio: deja sitio al punto de estado (::before) para que
-       no se solape con la primera letra de la recomendación. */
-    padding: 4px 9px 4px 19px !important;
+    padding: 4px 14px !important;
     font-size: 0.58rem !important;
-    letter-spacing: 0.06em !important;
-    border-radius: 4px !important;
+    letter-spacing: 0.05em !important;
+    border-radius: 5px !important;
     white-space: nowrap;
     line-height: 1.2;
+    min-width: 0 !important;
+    width: 100% !important;
     /* Glow más sutil aquí — no queremos que el sidebar grite */
     box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
     /* Apagamos la animación de entrada para que no parpadee cada rerun */
@@ -3490,27 +3513,31 @@ section[data-testid="stSidebar"] {
 
 /* Botón Home del sidebar — más prominente, full-width */
 [data-testid="stSidebar"] [class*="st-key-sidebar_home"] button {
-    background: linear-gradient(135deg, rgba(var(--accent-rgb),0.15), rgba(var(--accent-deep-rgb),0.10)) !important;
-    border: 1px solid rgba(var(--accent-rgb),0.40) !important;
-    color: var(--accent) !important;
+    background: linear-gradient(135deg, rgba(var(--accent-rgb),0.16), rgba(var(--accent-deep-rgb),0.10)) !important;
+    border: 1px solid rgba(var(--accent-rgb),0.42) !important;
+    color: var(--accent-hi) !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 700 !important;
-    font-size: 0.80rem !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.10em !important;
-    border-radius: 8px !important;
-    padding: 10px 14px !important;
+    font-size: 0.94rem !important;              /* letra más grande, de mejor gusto */
+    text-transform: none !important;             /* "Volver al Inicio" en caja normal */
+    letter-spacing: 0.01em !important;
+    border-radius: 10px !important;
+    padding: 12px 16px !important;               /* algo más de aire */
     text-align: center !important;
-    box-shadow: 0 2px 10px rgba(var(--accent-rgb),0.08) !important;
+    box-shadow: 0 2px 12px rgba(var(--accent-rgb),0.10), inset 0 1px 0 rgba(255,255,255,0.05) !important;
     transition: background var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out) !important;
 }
 
 [data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:hover {
-    background: linear-gradient(135deg, rgba(var(--accent-rgb),0.28), rgba(var(--accent-deep-rgb),0.18)) !important;
-    border-color: rgba(var(--accent-rgb),0.70) !important;
+    background: linear-gradient(135deg, rgba(var(--accent-rgb),0.30), rgba(var(--accent-deep-rgb),0.18)) !important;
+    border-color: rgba(var(--accent-rgb),0.72) !important;
     color: var(--text-hi) !important;
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 18px rgba(var(--accent-rgb),0.25) !important;
+    box-shadow: 0 6px 22px rgba(var(--accent-rgb),0.28), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+
+[data-testid="stSidebar"] [class*="st-key-sidebar_home"] button:active {
+    transform: translateY(0) scale(0.98) !important;
 }
 
 /* Compactar columnas dentro del sidebar para que el ticker/label + badge
@@ -3737,6 +3764,40 @@ section[data-testid="stSidebar"] {
     }
 }
 
+/* ── Íconos SVG personalizados por sección (chip .agent-icon + pestañas).
+   Un glifo por sección, con su COLOR propio, sobre el chip amarillo. Se
+   generan como data-URI (mismo patrón que los íconos Pro/Básico). ────── */
+.agent-icon--overview::before, .agent-icon--tecnico::before, .agent-icon--fundamentales::before, .agent-icon--futuro::before, .agent-icon--smart-money::before, .agent-icon--catalizadores::before, .agent-icon--macro::before, .agent-icon--sentimiento::before, .agent-icon--riesgo::before, .agent-icon--mercado::before, .agent-icon--orquestador::before {
+    content: ''; display: block; width: 21px; height: 21px;
+    background-repeat: no-repeat; background-position: center; background-size: contain;
+}
+.agent-icon--overview::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E2B25C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 17.5a8.5 8.5 0 0 1 17 0'/%3E%3Cpath d='M12 17.5l4.2-5'/%3E%3Ccircle cx='12' cy='17.5' r='1.4' fill='%23E2B25C' stroke='none'/%3E%3C/svg%3E"); }
+.agent-icon--tecnico::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236FA3E0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='8' y1='4' x2='8' y2='20'/%3E%3Crect x='6' y='8' width='4' height='7' rx='1' fill='%236FA3E0' stroke='none'/%3E%3Cline x1='16' y1='5.5' x2='16' y2='18.5'/%3E%3Crect x='14' y='9.5' width='4' height='6' rx='1' fill='%236FA3E0' stroke='none'/%3E%3C/svg%3E"); }
+.agent-icon--fundamentales::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232FB4A6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9l8-4.5 8 4.5'/%3E%3Cline x1='4' y1='20' x2='20' y2='20'/%3E%3Cline x1='7' y1='11' x2='7' y2='17'/%3E%3Cline x1='12' y1='11' x2='12' y2='17'/%3E%3Cline x1='17' y1='11' x2='17' y2='17'/%3E%3C/svg%3E"); }
+.agent-icon--futuro::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239D8CE0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3c3 2 4.5 5 4.5 8.5L12 16l-4.5-4.5C7.5 8 9 5 12 3z'/%3E%3Ccircle cx='12' cy='9' r='1.5' fill='%239D8CE0' stroke='none'/%3E%3Cpath d='M9 15.5L6.5 20l3.5-1.8M15 15.5L17.5 20 14 18.2'/%3E%3C/svg%3E"); }
+.agent-icon--smart-money::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237C83E8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='11' cy='12' r='3.4'/%3E%3Cline x1='11' y1='12' x2='13.6' y2='12'/%3E%3Cline x1='18' y1='9' x2='18' y2='15'/%3E%3C/svg%3E"); }
+.agent-icon--catalizadores::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2L5 13.5h5.2L9 22l9-12.5h-5.4L14 2z' fill='%23E0853F'/%3E%3C/svg%3E"); }
+.agent-icon--macro::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234FB6C4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cellipse cx='12' cy='12' rx='4' ry='9'/%3E%3Cline x1='3.2' y1='12' x2='20.8' y2='12'/%3E%3C/svg%3E"); }
+.agent-icon--sentimiento::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E06FA0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5.5h16v10H10l-4 3v-3H4z'/%3E%3Cpath d='M7.5 10.5l2 0 1.2-2.2 1.6 4 1.2-1.8 1.5 0'/%3E%3C/svg%3E"); }
+.agent-icon--riesgo::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F1495F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6z'/%3E%3Cline x1='12' y1='8.5' x2='12' y2='13'/%3E%3Ccircle cx='12' cy='16' r='0.7' fill='%23F1495F' stroke='none'/%3E%3C/svg%3E"); }
+.agent-icon--mercado::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234FB6C4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.5l8.5 4.7L12 12.9 3.5 8.2 12 3.5z'/%3E%3Cpath d='M3.5 13l8.5 4.7 8.5-4.7'/%3E%3C/svg%3E"); }
+.agent-icon--orquestador::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E2B25C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='2.4'/%3E%3Ccircle cx='5' cy='6' r='1.8'/%3E%3Ccircle cx='19' cy='6' r='1.8'/%3E%3Ccircle cx='5' cy='18' r='1.8'/%3E%3Ccircle cx='19' cy='18' r='1.8'/%3E%3Cpath d='M10.3 10.6L6.4 7.2M13.7 10.6l3.9-3.4M10.3 13.4l-3.9 3.4M13.7 13.4l3.9 3.4'/%3E%3C/svg%3E"); }
+
+/* Ícono de sección delante del nombre de cada pestaña (orden de st.tabs). */
+[data-testid="stTabs"] button[data-baseweb="tab"]::before {
+    content: ''; display: inline-block; width: 14px; height: 14px; margin-right: 5px;
+    vertical-align: -2px; background-repeat: no-repeat; background-position: center;
+    background-size: contain; flex: 0 0 auto;
+}
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(1)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E2B25C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 17.5a8.5 8.5 0 0 1 17 0'/%3E%3Cpath d='M12 17.5l4.2-5'/%3E%3Ccircle cx='12' cy='17.5' r='1.4' fill='%23E2B25C' stroke='none'/%3E%3C/svg%3E"); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(2)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236FA3E0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='8' y1='4' x2='8' y2='20'/%3E%3Crect x='6' y='8' width='4' height='7' rx='1' fill='%236FA3E0' stroke='none'/%3E%3Cline x1='16' y1='5.5' x2='16' y2='18.5'/%3E%3Crect x='14' y='9.5' width='4' height='6' rx='1' fill='%236FA3E0' stroke='none'/%3E%3C/svg%3E"); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(3)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232FB4A6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9l8-4.5 8 4.5'/%3E%3Cline x1='4' y1='20' x2='20' y2='20'/%3E%3Cline x1='7' y1='11' x2='7' y2='17'/%3E%3Cline x1='12' y1='11' x2='12' y2='17'/%3E%3Cline x1='17' y1='11' x2='17' y2='17'/%3E%3C/svg%3E"); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(4)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239D8CE0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3c3 2 4.5 5 4.5 8.5L12 16l-4.5-4.5C7.5 8 9 5 12 3z'/%3E%3Ccircle cx='12' cy='9' r='1.5' fill='%239D8CE0' stroke='none'/%3E%3Cpath d='M9 15.5L6.5 20l3.5-1.8M15 15.5L17.5 20 14 18.2'/%3E%3C/svg%3E"); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(5)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237C83E8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='11' cy='12' r='3.4'/%3E%3Cline x1='11' y1='12' x2='13.6' y2='12'/%3E%3Cline x1='18' y1='9' x2='18' y2='15'/%3E%3C/svg%3E"); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(6)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234FB6C4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.5l8.5 4.7L12 12.9 3.5 8.2 12 3.5z'/%3E%3Cpath d='M3.5 13l8.5 4.7 8.5-4.7'/%3E%3C/svg%3E"); }
+[data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(7)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F1495F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6z'/%3E%3Cline x1='12' y1='8.5' x2='12' y2='13'/%3E%3Ccircle cx='12' cy='16' r='0.7' fill='%23F1495F' stroke='none'/%3E%3C/svg%3E"); }
+
+
 </style>
 """
 
@@ -3786,4 +3847,19 @@ AGENT_ICONS = {
     "Contexto de Mercado": "CM",
     "Riesgo":            "RS",
     "Orquestador":       "OR",
+}
+
+# Slug de cada agente → clase CSS del ícono SVG (.agent-icon--<slug>). Sustituye
+# al monograma en el chip. Si un agente no está aquí, el chip cae al monograma.
+AGENT_ICON_SLUG = {
+    "Fundamentales":     "fundamentales",
+    "Técnico":           "tecnico",
+    "Viabilidad Futura": "futuro",
+    "Smart Money":       "smart-money",
+    "Catalizadores":     "catalizadores",
+    "Macro & Sector":    "macro",
+    "Sentimiento":       "sentimiento",
+    "Contexto de Mercado": "mercado",
+    "Riesgo":            "riesgo",
+    "Orquestador":       "orquestador",
 }

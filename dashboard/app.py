@@ -25,8 +25,18 @@ from agents.orchestrator import Orchestrator, StockAnalysis
 from agents.screener import ScreenerAgent, ScreenerResult
 from dashboard.styles import (
     BLOOMBERG_CSS, get_recommendation_badge, score_color,
-    score_css_class, AGENT_ICONS,
+    score_css_class, AGENT_ICONS, AGENT_ICON_SLUG,
 )
+
+
+def _agent_icon_html(agent_name):
+    """Chip del ícono de sección: SVG personalizado (clase .agent-icon--<slug>)
+    si el agente tiene slug; si no, cae al monograma (FN/TC/…) como antes."""
+    slug = AGENT_ICON_SLUG.get(agent_name)
+    if slug:
+        return f'<span class="agent-icon agent-icon--{slug}"></span>'
+    mono = AGENT_ICONS.get(agent_name) or (str(agent_name)[:2].upper() or "··")
+    return f'<span class="agent-icon">{mono}</span>'
 # charts se importa lazy para no cargar plotly al arrancar (ahorra ~80MB RAM)
 def _charts():
     from dashboard import charts as _c
@@ -470,15 +480,38 @@ def _sb_load_scan(scan_id: str):
     st.session_state._scan_diagnostics = {}
 
 
+@st.cache_data(show_spinner=False)
+def _logo_data_uri():
+    """Logo del sidebar como data-URI base64 — embebido, sin depender de rutas al
+    desplegar. '' si no se encuentra el asset (entonces se usa el logo de texto)."""
+    import base64
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo_dlp.png")
+        with open(p, "rb") as f:
+            return "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        return ""
+
+
 def render_sidebar():
     with st.sidebar:
-        # ── Brand ───────────────────────────────────────────────────────
-        st.markdown("""
-        <div class="sidebar-brand">
-            <div class="sidebar-brand-logo">◈ DLP</div>
-            <div class="sidebar-brand-sub">MARKET ANALYZER</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # ── Brand — logo del club DLP (PNG). Fallback al logo de texto si el
+        #    asset no está disponible. ─────────────────────────────────────
+        _logo = _logo_data_uri()
+        if _logo:
+            st.markdown(
+                f'<div class="sidebar-brand">'
+                f'<img class="sidebar-brand-img" src="{_logo}" alt="DLP Club" />'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown("""
+            <div class="sidebar-brand">
+                <div class="sidebar-brand-logo">◈ DLP</div>
+                <div class="sidebar-brand-sub">MARKET ANALYZER</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # ── Botón minimizar columna — el CSS lo posiciona (absoluto) sobre
         #    la misma línea del logo, arriba a la derecha. ─────────────────
@@ -488,7 +521,7 @@ def render_sidebar():
             st.rerun()
 
         # ── Home ─────────────────────────────────────────────────────────
-        if st.button("⌂  Volver al Home", use_container_width=True,
+        if st.button("⌂  Volver al Inicio", use_container_width=True,
                      key="sidebar_home"):
             _sb_go_home()
             st.rerun()
@@ -577,7 +610,7 @@ def render_top_nav():
     apretaba demasiado el contenido). Solo se muestra en vistas NO-welcome."""
     col_a, col_home, col_c = st.columns([1, 2, 1])
     with col_home:
-        if st.button("⌂  Volver al Home", use_container_width=True,
+        if st.button("⌂  Volver al Inicio", use_container_width=True,
                      key="topnav_home_btn"):
             st.session_state.selected_ticker = None
             st.session_state.quick_view_ticker = None
@@ -953,13 +986,13 @@ def _render_agent_header(report):
     """Header strip con icono, nombre del agente, score y conviction badge."""
     score = report.score
     color = score_color(score)
-    icon = AGENT_ICONS.get(report.agent_name) or (str(report.agent_name)[:2].upper() or "··")
+    icon_html = _agent_icon_html(report.agent_name)
     conv_colors = {"HIGH": "#3DD68C", "MEDIUM": "#E2B25C", "LOW": "#F1495F"}
     conv_color = conv_colors.get(report.conviction, "#E2B25C")
     st.markdown(f"""
     <div class="agent-header">
         <div class="agent-header-left">
-            <span class="agent-icon">{icon}</span>
+            {icon_html}
             <span class="agent-name">{report.agent_name}</span>
         </div>
         <div class="agent-header-right">
@@ -3088,7 +3121,7 @@ def render_scan_results():
             st.session_state._show_scan_results = False
             st.rerun()
     with col_home:
-        if st.button("⌂ Volver al Home", key="scan_back_home",
+        if st.button("⌂ Volver al Inicio", key="scan_back_home",
                      use_container_width=True):
             st.session_state.scan_results = []
             st.session_state.current_scan_id = None

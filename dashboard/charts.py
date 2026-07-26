@@ -1012,10 +1012,10 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
         font=dict(color=TEXT),
-        height=height + 60,
-        # Margen asimétrico (más a la derecha) empuja el gauge hacia la
-        # IZQUIERDA dentro de su tarjeta, sin cortar el tick "0".
-        margin=dict(l=24, r=72, t=55, b=20),
+        height=height + 95,   # más grande dentro de su tarjeta
+        # Márgenes SIMÉTRICOS → gauge (domain x=[0,1]) y número (x=0.5) CENTRADOS
+        # en la tarjeta. Antes un margen asimétrico (r=72) lo empujaba a la izq.
+        margin=dict(l=44, r=44, t=54, b=16),
     )
     return fig
 
