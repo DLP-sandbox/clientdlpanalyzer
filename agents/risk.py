@@ -85,7 +85,7 @@ Sé honesto: si la empresa es de calidad excepcional pero el precio actual está
 
 
 class RiskAgent(BaseAgent):
-    name = "Riesgo & Sizing"
+    name = "Riesgo"
 
     def analyze(self, ticker: str, data: dict = None) -> AgentReport:
         try:
@@ -198,7 +198,7 @@ class RiskAgent(BaseAgent):
         price = risk.get("current_price", ind.get("current_price", "N/A"))
 
         lines = [
-            f"# Análisis de Riesgo & Sizing: {ticker} — {info.get('name', ticker)}",
+            f"# Análisis de Riesgo: {ticker} — {info.get('name', ticker)}",
             f"**Precio actual:** ${price}",
             f"**Beta:** {(info.get('beta') or 1.0):.2f}",
             "",

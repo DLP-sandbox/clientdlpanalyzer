@@ -3738,6 +3738,6 @@ AGENT_ICONS = {
     "Macro & Sector":    "MC",
     "Sentimiento":       "SN",
     "Contexto de Mercado": "CM",
-    "Riesgo & Sizing":   "RS",
+    "Riesgo":            "RS",
     "Orquestador":       "OR",
 }
