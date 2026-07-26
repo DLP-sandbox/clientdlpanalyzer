@@ -1193,68 +1193,72 @@ def build_quick_chart(df: pd.DataFrame, ticker: str, period_days: int = 126) -> 
 # ── Risk/Reward Visual ────────────────────────────────────────────────────
 
 def build_rr_chart(current_price: float, stop: float, target: float, ticker: str) -> go.Figure:
-    """Visualización del Upside/Downside calculado desde el PRECIO ACTUAL hasta target/stop."""
+    """Escalera de precios Upside/Downside desde el PRECIO ACTUAL.
+
+    Columna central con dos zonas PROPORCIONALES al recorrido de precio: verde
+    (actual→objetivo) arriba y roja (protección→actual) abajo. Como ambas alturas
+    representan el % (relativo al precio actual), la MAYOR se ve al instante y la
+    asimetría subida/caída queda evidente. Etiquetas a la derecha, una por nivel
+    (a distinta altura → nunca se solapan) y precios en el eje izquierdo."""
     if not all([current_price, stop, target]):
         return go.Figure()
 
     downside_pct = (current_price - stop) / current_price * 100
     upside_pct   = (target - current_price) / current_price * 100
     rr           = upside_pct / downside_pct if downside_pct > 0 else 0
+    rr_color     = GREEN if rr >= 3 else (ORANGE if rr >= 2 else RED)
+
+    span = max(target - stop, 1e-6)
+    pad  = span * 0.10
+    BAR_L, BAR_R = 0.30, 0.56       # columna central
+    CX   = (BAR_L + BAR_R) / 2
+    LBL_X = 0.62                    # etiquetas a la derecha del bar
 
     fig = go.Figure()
+    # Traza fantasma para asegurar render (algunas versiones no pintan una figura
+    # solo-shapes de forma fiable); invisible y sin hover.
+    fig.add_trace(go.Scatter(x=[CX], y=[current_price], mode="markers",
+                             marker=dict(size=0.1, color="rgba(0,0,0,0)"),
+                             hoverinfo="skip", showlegend=False))
 
-    # Zona de pérdida (stop → precio actual)
-    fig.add_shape(type="rect",
-        x0=0, x1=1, y0=stop, y1=current_price,
-        fillcolor="rgba(241,73,95,0.1)",
-        line=dict(width=0),
-    )
+    # Zona de GANANCIA (verde) y de PÉRDIDA (roja) — proporcionales al precio.
+    fig.add_shape(type="rect", x0=BAR_L, x1=BAR_R, y0=current_price, y1=target,
+                  fillcolor="rgba(61,214,140,0.18)", line=dict(color=GREEN, width=1.2), layer="below")
+    fig.add_shape(type="rect", x0=BAR_L, x1=BAR_R, y0=stop, y1=current_price,
+                  fillcolor="rgba(241,73,95,0.18)", line=dict(color=RED, width=1.2), layer="below")
+    # Línea del precio actual (referencia, el "0%").
+    fig.add_shape(type="line", x0=BAR_L - 0.04, x1=BAR_R + 0.04,
+                  y0=current_price, y1=current_price, line=dict(color=ORANGE, width=2.5))
 
-    # Zona de ganancia (precio actual → target)
-    fig.add_shape(type="rect",
-        x0=0, x1=1, y0=current_price, y1=target,
-        fillcolor="rgba(61,214,140,0.1)",
-        line=dict(width=0),
-    )
+    # % grande centrado en cada zona (solo si la zona tiene altura suficiente).
+    if (target - current_price) > span * 0.09:
+        fig.add_annotation(x=CX, y=(current_price + target) / 2, text=f"<b>+{upside_pct:.1f}%</b>",
+                           showarrow=False, font=dict(color=GREEN, size=16, family="JetBrains Mono"))
+    if (current_price - stop) > span * 0.09:
+        fig.add_annotation(x=CX, y=(stop + current_price) / 2, text=f"<b>−{downside_pct:.1f}%</b>",
+                           showarrow=False, font=dict(color=RED, size=16, family="JetBrains Mono"))
 
-    # Líneas horizontales con labels INSIDE para que no se corten
-    for price, color, label, dash in [
-        (current_price, ORANGE, f"PRECIO ACTUAL · ${current_price:.2f}", "solid"),
-        (stop,          RED,    f"PROTECCIÓN · ${stop:.2f} (-{downside_pct:.1f}%)", "dash"),
-        (target,        GREEN,  f"TARGET · ${target:.2f} (+{upside_pct:.1f}%)", "dash"),
+    # Etiquetas a la derecha, una por nivel (distinta altura → no se solapan).
+    for y, col, l1, l2 in [
+        (target,        GREEN,  "▲ OBJETIVO",     f"${target:,.2f}  ·  +{upside_pct:.1f}%"),
+        (current_price, ORANGE, "● PRECIO ACTUAL", f"${current_price:,.2f}"),
+        (stop,          RED,    "▼ PROTECCIÓN",   f"${stop:,.2f}  ·  −{downside_pct:.1f}%"),
     ]:
-        fig.add_hline(y=price, line_color=color, line_width=1.8, line_dash=dash,
-                      annotation_text=label,
-                      annotation_position="top left",
-                      annotation_xanchor="left",
-                      annotation_xshift=8,
-                      annotation_yshift=-2,
-                      annotation_font_color=color,
-                      annotation_font_size=11,
-                      annotation_font_family="JetBrains Mono",
-                      annotation_bgcolor="rgba(10,11,13,0.85)",
-                      annotation_bordercolor=color,
-                      annotation_borderwidth=1,
-                      annotation_borderpad=4)
+        fig.add_annotation(x=LBL_X, y=y, xanchor="left", yanchor="middle", align="left",
+                           text=f"<span style='color:{col}'>{l1}</span><br><b>{l2}</b>",
+                           showarrow=False, font=dict(color=col, size=12, family="JetBrains Mono"))
 
     fig.update_layout(
-        paper_bgcolor=BG_MAIN,
-        plot_bgcolor=BG_MAIN,
+        paper_bgcolor=BG_MAIN, plot_bgcolor=BG_MAIN,
         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11),
-        height=300,
-        showlegend=False,
-        dragmode=False,   # no se puede arrastrar ni hacer zoom (sin usar staticPlot)
-        yaxis=dict(range=[stop * 0.94, target * 1.06], gridcolor=GRID, zerolinecolor=GRID,
-                   tickprefix="$", tickfont=dict(color=MUTED, size=9)),
-        xaxis=dict(showticklabels=False, showgrid=False, zerolinecolor=GRID),
-        margin=dict(l=10, r=20, t=50, b=15),
-        hovermode=False,
-        title=dict(
-            text=f"<b>UPSIDE / DOWNSIDE</b>  ·  R/R {rr:.1f}:1  ·  desde precio actual",
-            font=dict(color=GREEN if rr >= 3 else (ORANGE if rr >= 2 else RED), size=13),
-            x=0.01,
-            y=0.97,
-        ),
+        height=320, showlegend=False, dragmode=False, hovermode=False,
+        margin=dict(l=62, r=14, t=50, b=16),
+        xaxis=dict(range=[0, 1], showgrid=False, showticklabels=False, zeroline=False, fixedrange=True),
+        yaxis=dict(range=[stop - pad, target + pad], gridcolor="rgba(0,0,0,0)", zeroline=False,
+                   tickvals=[stop, current_price, target],
+                   ticktext=[f"${stop:,.0f}", f"${current_price:,.0f}", f"${target:,.0f}"],
+                   tickfont=dict(color=MUTED, size=10), fixedrange=True),
+        title=dict(text=f"<b>UPSIDE / DOWNSIDE</b>   ·   R/R {rr:.1f}:1",
+                   font=dict(color=rr_color, size=13), x=0.5, xanchor="center", y=0.97),
     )
-
     return fig

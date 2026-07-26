@@ -904,6 +904,14 @@ def run_market_scan(filters: Optional[dict] = None):
 
 # ── Helpers reutilizables para tabs de agentes ───────────────────────────
 
+def _conv_es(conv):
+    """Traduce la convicción a español para MOSTRAR (femenino, concuerda con
+    'convicción'). El valor interno (HIGH/MEDIUM/LOW) NO cambia: sigue
+    alimentando los mapas de color, que usan las claves en inglés."""
+    return {"HIGH": "ALTA", "MEDIUM": "MEDIA", "LOW": "BAJA"}.get(
+        str(conv).upper(), str(conv))
+
+
 def _render_agent_header(report):
     """Header strip con icono, nombre del agente, score y conviction badge."""
     score = report.score
@@ -920,7 +928,7 @@ def _render_agent_header(report):
         <div class="agent-header-right">
             <span class="agent-score" style="color:{color};">{score:.0f}<span class="agent-score-max">/100</span></span>
             <span class="conviction-badge" style="color:{conv_color};border-color:{conv_color}40;background:{conv_color}1A;">
-                {report.conviction}
+                {_conv_es(report.conviction)}
             </span>
         </div>
     </div>
@@ -1440,7 +1448,7 @@ def render_overview(analysis: StockAnalysis):
         )
         st.markdown(
             f'<div style="text-align:center;font-family:JetBrains Mono;font-size:0.75rem;color:{conviction_color};margin-top:4px;">'
-            f'Conviction: {analysis.conviction_level}</div>',
+            f'Convicción: {_conv_es(analysis.conviction_level)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -2935,7 +2943,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
             f'<div style="text-align:center;padding:16px;background:#0F1419;border:1px solid #232830;border-radius:8px;border-top:3px solid {color};">'
             f'<div style="font-family:JetBrains Mono;font-size:3rem;font-weight:700;color:{color};">{score:.0f}</div>'
             f'<div style="font-size:0.7rem;color:#8D949E;text-transform:uppercase;letter-spacing:0.1em;">Score / 100</div>'
-            f'<div style="font-size:0.75rem;color:{color};margin-top:4px;">{report.conviction}</div>'
+            f'<div style="font-size:0.75rem;color:{color};margin-top:4px;">{_conv_es(report.conviction)}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
