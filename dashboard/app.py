@@ -341,9 +341,46 @@ def inject_protection():
             } catch (e) {}
         }
 
+        // ── Auto-fit del VALOR de las tarjetas a UNA sola línea ──────────────
+        // Los valores (.status-pill-value / .kpi-tile-value) van con white-space:
+        // nowrap; si el texto no cabe, aquí se ENCOGE la fuente hasta que quepa
+        // completo en una línea (nunca se apila ni se corta con "…"). Mide el
+        // ancho REAL, así funciona igual en desktop y en el iframe estrecho.
+        function fitText(d) {
+            if (!d) return;
+            try {
+                var els = d.querySelectorAll('.status-pill-value, .kpi-tile-value');
+                var view = d.defaultView || window;
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    // Saltar los ocultos (pestañas inactivas): clientWidth 0 daría
+                    // un encogido erróneo. Se ajustan cuando su pestaña se muestre.
+                    if (!el.clientWidth || el.offsetParent === null) continue;
+                    var txt = el.textContent || '';
+                    var w = String(el.clientWidth);
+                    // Re-ajustar SOLO cuando cambia el TEXTO o el ANCHO (resize /
+                    // iframe más estrecho) → sin bucles ni parpadeo, pero re-encaja
+                    // si el contenedor cambia de tamaño.
+                    if (el.getAttribute('data-fit') === txt &&
+                        el.getAttribute('data-fitw') === w) continue;
+                    el.style.fontSize = '';   // vuelve a la fuente base del CSS
+                    var size = parseFloat(view.getComputedStyle(el).fontSize) || 16;
+                    var guard = 0;
+                    while (el.scrollWidth > el.clientWidth + 1 && size > 9 && guard < 60) {
+                        size -= 0.5;
+                        el.style.fontSize = size + 'px';
+                        guard++;
+                    }
+                    el.setAttribute('data-fit', txt);
+                    el.setAttribute('data-fitw', w);
+                }
+            } catch (e) {}
+        }
+
         // Repasa branding + re-arma el bloqueo de click derecho (por si aparece
-        // un iframe/nodo nuevo tras un rerun de Streamlit) + oculta el resizer.
-        function sweep() { nukeEverywhere(); armEverywhere(); hideSidebarResizer(); }
+        // un iframe/nodo nuevo tras un rerun de Streamlit) + oculta el resizer +
+        // ajusta el tamaño del texto de las tarjetas.
+        function sweep() { nukeEverywhere(); armEverywhere(); hideSidebarResizer(); fitText(doc); }
 
         sweep();
         try {
@@ -1177,7 +1214,12 @@ def _translate_status(text):
 
 
 def _clean_tile_value(value, max_len=22):
-    """Limpia valor para tile: quita paréntesis, descripciones largas, traduce y trunca."""
+    """Limpia valor para tile: quita paréntesis, descripciones largas y traduce.
+
+    NO trunca con "…": el valor llega COMPLETO al DOM y la rutina JS fitText()
+    (en inject_protection) encoge la fuente para que quepa en UNA sola línea. El
+    parámetro max_len se conserva por compatibilidad con los call sites, pero ya
+    no recorta (la prioridad es que la palabra se vea entera)."""
     if value is None or value == "":
         return "—"
     s = str(value).strip()
@@ -1192,9 +1234,6 @@ def _clean_tile_value(value, max_len=22):
         return "—"
     # Traduce términos comunes
     s = _translate_status(s)
-    # Trunca con ellipsis
-    if len(s) > max_len:
-        s = s[:max_len].rstrip() + "…"
     return s
 
 
@@ -2650,25 +2689,52 @@ def render_sentiment(analysis: StockAnalysis):
         rep_level = ("good" if "bajo" in _rep else
                      "bad" if "alto" in _rep else "warn")
 
-        _render_status_pills([
+        # Descripciones (sub) como FRASES naturales, derivadas del estado real —
+        # más específicas y claras (lenguaje tipo IA), aprovechando que en la
+        # cuadrícula 2×2 las tarjetas son más anchas.
+        _news_n = rd.get("news_count", 0)
+        _tema_txt = _clean_tile_value(narr_raw, max_len=40)
+        mom_sub = ("El tono de las noticias mejora y la narrativa reciente acompaña al precio."
+                   if mom_level == "good" else
+                   "El tono de las noticias empeora; la narrativa reciente juega en contra a corto plazo."
+                   if mom_level == "bad" else
+                   "El tono de las noticias se mantiene estable, sin un sesgo claro.")
+        tema_sub = (f"El foco de las {_news_n} noticias recientes gira en torno a {_tema_txt.lower()}."
+                    if _tema_txt not in ("—", "") else
+                    f"Sin un tema dominante claro en las {_news_n} noticias recientes.")
+        cont_sub = ("Miedo extremo en el mercado: el pesimismo exagerado suele preceder rebotes."
+                    if cont_level == "good" else
+                    "Euforia extrema: la masa está demasiado optimista, una señal de cautela."
+                    if cont_level == "bad" else
+                    "Sin extremos de euforia ni pánico; el sentimiento no da una señal contraria clara.")
+        rep_sub = ("Riesgo ESG/regulatorio bajo: pocos frentes que puedan golpear el precio por sorpresa."
+                   if rep_level == "good" else
+                   "Riesgo ESG/regulatorio alto: posibles multas, demandas o escándalos que pesen en el precio."
+                   if rep_level == "bad" else
+                   "Riesgo ESG/regulatorio moderado: conviene vigilar los frentes regulatorios.")
+
+        _sent_pills = [
             {"label": "Momentum Sentimiento",
              "value": _clean_tile_value(mom_raw, max_len=14),
-             "level": mom_level, "sub": "Mejorando o deteriorando",
+             "level": mom_level, "sub": mom_sub,
              "tooltip": "Dirección del sentimiento en las noticias recientes: si la narrativa sobre la empresa está mejorando o deteriorándose. Un sentimiento que mejora suele acompañar (o anticipar) subidas; uno que se deteriora, lo contrario."},
             {"label": "Tema Narrativo",
              "value": _clean_tile_value(narr_raw, max_len=14),
-             "level": "neutral",
-             "sub": f"{rd.get('news_count', 0)} noticias",
+             "level": "neutral", "sub": tema_sub,
              "tooltip": "Tema dominante que domina las noticias sobre la acción en este momento (resultados, producto, regulación, etc.). Ayuda a entender qué está moviendo la conversación y, por tanto, el precio a corto plazo."},
             {"label": "Señal Contraria",
              "value": _clean_tile_value(cont_raw, max_len=14),
-             "level": cont_level, "sub": "Comprar miedo / Vender euforia",
+             "level": cont_level, "sub": cont_sub,
              "tooltip": "Lectura a contracorriente: cuando TODOS son extremadamente optimistas suele ser mejor vender, y cuando reina el pánico suele haber oportunidad. Señala si el sentimiento está tan en un extremo que conviene hacer lo contrario a la masa."},
             {"label": "Riesgo Reputacional",
              "value": _clean_tile_value(rep_raw, max_len=10),
-             "level": rep_level, "sub": "ESG / regulatorio",
+             "level": rep_level, "sub": rep_sub,
              "tooltip": "Riesgo de daño a la reputación por temas ambientales, sociales, de gobernanza (ESG) o regulatorios: demandas, multas, escándalos. Alto = posibles sustos que golpeen el precio al margen del negocio."},
-        ])
+        ]
+        # Cuadrícula 2×2: dos filas de 2 (cada _render_status_pills hace
+        # st.columns(2) → cada tarjeta ≈ el doble de ancha que antes).
+        _render_status_pills(_sent_pills[:2])
+        _render_status_pills(_sent_pills[2:])
 
     # ── Pros / Cons ──
     _render_pros_cons(report,

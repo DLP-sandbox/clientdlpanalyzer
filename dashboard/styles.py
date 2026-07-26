@@ -1364,15 +1364,14 @@ hr {
     font-family: var(--font-mono);
     font-size: 1.3rem;
     font-weight: 700;
-    line-height: 1.15;
+    line-height: 1.2;
     letter-spacing: -0.01em;
     font-variant-numeric: tabular-nums;
-    word-break: break-word;
+    /* SIEMPRE en una sola línea (ver fitText() en inject_protection): si no
+       cabe, se encoge la fuente; nunca se apila ni se corta con "…". */
+    white-space: nowrap;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    max-height: 3.2rem;
+    text-overflow: clip;
 }
 
 /* ── Tooltip (?) icon con popup al hover ─────────────────── */
@@ -1762,25 +1761,29 @@ hr {
     font-family: var(--font-mono);
     font-size: 0.98rem;
     font-weight: 700;
-    line-height: 1.25;
+    line-height: 1.35;
     letter-spacing: -0.01em;
     font-variant-numeric: tabular-nums;
     color: var(--text-hi);
-    word-break: break-word;
+    /* SIEMPRE en una sola línea: si el texto no cabe, la rutina JS fitText()
+       (en inject_protection) encoge la fuente hasta que quepa completo. Nunca
+       se apila en 2 líneas ni se corta con "…". */
+    white-space: nowrap;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    max-height: 2.7rem;
+    text-overflow: clip;
 }
 
 .status-pill-sub {
     font-family: var(--font-ui);
     font-size: 0.68rem;
     color: var(--text-3);
+    line-height: 1.35;
+    /* Hasta 2 líneas — permite descripciones más completas (frases naturales,
+       p.ej. en Sentimiento) sin cortarlas con "…". */
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
 }
 
 /* ── Insight card: panel sereno con barra fina de acento ── */
