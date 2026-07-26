@@ -915,7 +915,51 @@ def get_relative_strength(ticker: str, benchmark: str = "SPY", period: str = "1y
 
     result = {"rs_score": 50, "rs_6m": None, "rs_3m": None, "rs_1m": None}
 
-    if stock_data.empty or spy_data.empty:
+    def _perf(row, k):
+        try:
+            v = float(row.get(k))
+            return v if v == v else None
+        except (TypeError, ValueError):
+            return None
+
+    # Respaldo INFALIBLE (Render): RS con Perf puntuales. La acción se toma de
+    # TradingView (responde en datacenter); el benchmark S&P500 se toma del SPY
+    # histórico de Nasdaq (número REAL, también responde en datacenter). El ETF
+    # SPY no está en el escáner de acciones de TradingView, por eso NO se usa
+    # _tv_row para el benchmark. Muta `result`; devuelve True si logró rs_6m real.
+    def _rs_via_tradingview() -> bool:
+        try:
+            st = _tv_row(ticker)
+            if benchmark.upper() in ("SPY", "^GSPC", "GSPC", "SPX", "US500", "VOO", "IVV"):
+                bm = _sp500_benchmark_perf()
+            else:
+                bm = _tv_row(benchmark)
+            if not (st and bm):
+                return False
+            for tvk, rsk in [("Perf.1M", "rs_1m"), ("Perf.3M", "rs_3m"), ("Perf.6M", "rs_6m")]:
+                a, b = _perf(st, tvk), _perf(bm, tvk)
+                if a is not None and b is not None:
+                    result[rsk] = float(a - b)
+            a12, b12 = _perf(st, "Perf.Y"), _perf(bm, "Perf.Y")
+            if a12 is not None and b12 is not None:
+                result["rs_composite"] = float(a12 - b12)
+            return result.get("rs_6m") is not None
+        except Exception:
+            return False
+
+    # Datos utilizables = no-vacíos y con ≥20 cierres reales. Detecta el caso de
+    # Render donde Yahoo devuelve un DataFrame no-vacío pero LLENO DE NaN.
+    def _usable(df) -> bool:
+        try:
+            return (not df.empty) and "Close" in df.columns \
+                and pd.to_numeric(df["Close"], errors="coerce").notna().sum() >= 20
+        except Exception:
+            return False
+
+    if not _usable(stock_data) or not _usable(spy_data) \
+            or len(stock_data.index.intersection(spy_data.index)) < 20:
+        if _rs_via_tradingview():
+            _save_cache(key, result)
         return result
 
     # Alinear fechas
@@ -943,6 +987,14 @@ def get_relative_strength(ticker: str, benchmark: str = "SPY", period: str = "1y
     composite = rs12 * 0.40 + rs6 * 0.20 + rs3 * 0.20 + rs1 * 0.20
     # Normalizar a 0-99
     result["rs_composite"] = float(composite)
+
+    # Red de seguridad: si la data OHLCV salió parcialmente corrupta y el RS
+    # quedó NaN, reconstruir con TradingView antes de devolver/cachear.
+    rs6m = result.get("rs_6m")
+    if rs6m is None or rs6m != rs6m:
+        result = {"rs_score": 50, "rs_6m": None, "rs_3m": None, "rs_1m": None}
+        if not _rs_via_tradingview():
+            return result
 
     _save_cache(key, result)
     return result
@@ -982,6 +1034,39 @@ def _tv_row(ticker: str) -> dict:
                 return df.iloc[0].to_dict()
         except Exception:
             continue
+    return {}
+
+
+def _sp500_benchmark_perf() -> dict:
+    """Perf REAL del S&P 500 para el respaldo del Relative Strength en Render,
+    calculado desde el histórico de SPY de Nasdaq (api.nasdaq.com responde en IPs
+    de datacenter). Se usa como benchmark cuando el OHLCV de yfinance viene vacío
+    o corrupto en cloud.
+
+    ¿Por qué no TradingView? El escáner de ACCIONES de TradingView no incluye
+    ETFs ni índices (SPY/SPX/US500/VOO salen vacíos), y el promedio de mega-caps
+    sobreestima el retorno → distorsionaría el RS. El SPY de Nasdaq da el número
+    REAL. Devuelve {"Perf.1M","Perf.3M","Perf.6M","Perf.Y"} en % (mismas claves
+    que _tv_row) o {} si falla. Cachea. NUNCA lanza."""
+    cached = _load_cache("sp500_benchmark_perf", ttl_hours=TTL_RS)
+    if cached:
+        return cached
+    try:
+        spy = _get_price_history_from_nasdaq("SPY", "1y", "1d")
+        if spy is not None and not spy.empty and "Close" in spy.columns:
+            c = pd.to_numeric(spy["Close"], errors="coerce").dropna()
+            if len(c) > 30:
+                out = {}
+                for n, k in [(21, "Perf.1M"), (63, "Perf.3M"), (126, "Perf.6M"), (252, "Perf.Y")]:
+                    if len(c) > n:
+                        out[k] = float((c.iloc[-1] / c.iloc[-n] - 1) * 100)
+                if "Perf.Y" not in out:  # <252 sesiones: usar el primer dato disponible
+                    out["Perf.Y"] = float((c.iloc[-1] / c.iloc[0] - 1) * 100)
+                if out.get("Perf.6M") is not None:
+                    _save_cache("sp500_benchmark_perf", out)
+                    return out
+    except Exception:
+        pass
     return {}
 
 

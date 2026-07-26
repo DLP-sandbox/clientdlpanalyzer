@@ -1380,18 +1380,24 @@ def render_overview(analysis: StockAnalysis):
             _current_price = _safe_num(_live_info.get("current_price")) or _safe_num(analysis.entry_price)
             # Target de analistas de get_company_info como respaldo probado en Render.
             _target = _safe_num(analysis.target_price) or _safe_num(_live_info.get("target_price"))
-            rr_num  = _safe_num(str(analysis.risk_reward or "").split(":")[0]) if analysis.risk_reward else None
-            # Respaldo INFALIBLE: si el análisis cacheado no trae precio/target/RR
+            _stop   = _safe_num(analysis.stop_loss)
+            # Respaldo INFALIBLE: si el análisis cacheado no trae precio/stop/target
             # (datos bloqueados al generarse), se recalculan frescos (OHLCV o TradingView).
-            if _target is None or _current_price is None or rr_num is None:
+            if _target is None or _current_price is None or _stop is None:
                 _fr = get_risk_levels(analysis.ticker)
                 if _fr:
                     _current_price = _current_price or _fr.get("current_price")
                     _target = _target or _fr.get("target")
-                    rr_num  = rr_num  or _fr.get("rr")
+                    _stop   = _stop   or _fr.get("stop")
+            # R/R calculado desde el PRECIO ACTUAL en vivo — IDÉNTICO a la pestaña
+            # de Riesgo (antes leía analysis.risk_reward, calculado sobre una
+            # entrada hipotética distinta → discrepaba con la pestaña de Riesgo).
+            _down = ((_current_price - _stop) / _current_price * 100) if (_current_price and _stop) else None
+            _up   = ((_target - _current_price) / _current_price * 100) if (_current_price and _target) else None
+            rr_num = (_up / _down) if (_down and _down > 0 and _up is not None) else None
             entry_str  = f"${_current_price:.2f}"  if _current_price else "—"
             target_str = f"${_target:.2f}" if _target else "—"
-            rr_str     = (f"{rr_num:.1f}:1" if rr_num else _extract_rr_ratio(analysis.risk_reward))
+            rr_str     = (f"{rr_num:.1f}:1" if rr_num is not None else _extract_rr_ratio(analysis.risk_reward))
 
             metrics = [
                 {
