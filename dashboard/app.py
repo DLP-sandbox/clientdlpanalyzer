@@ -106,8 +106,9 @@ st.markdown(BLOOMBERG_CSS, unsafe_allow_html=True)
 # Máximo de análisis mantenidos EN MEMORIA (RAM) a la vez. Acota el uso de
 # memoria sin importar cuántos análisis se hayan acumulado.
 # Debe coincidir con MAX_ANALYSES_ON_DISK (persistence) para que la barra
-# lateral y el almacenamiento muestren lo mismo: los 5 más recientes.
-MAX_HISTORY_IN_MEMORY = 5
+# lateral y el almacenamiento muestren lo mismo: los 4 más recientes.
+# (4 y no 5: el contenedor de Render se quedaba sin memoria.)
+MAX_HISTORY_IN_MEMORY = 4
 
 
 def _prune_analyses_in_memory():
@@ -565,43 +566,10 @@ def render_sidebar():
                         unsafe_allow_html=True,
                     )
 
-        # ── Separador estético entre secciones ──────────────────────────
-        st.markdown('<div class="sb-section-divider"></div>',
-                    unsafe_allow_html=True)
-
-        # ── Historial: Escaneos del Mercado (DESPUÉS) ───────────────────
-        st.markdown('<div class="sb-section-title">Escaneos · Mercado</div>',
-                    unsafe_allow_html=True)
-
-        try:
-            from data.persistence import get_scan_history_labels
-            scans = get_scan_history_labels()
-        except Exception:
-            scans = []
-
-        if not scans:
-            st.markdown(
-                '<div class="sb-empty">Sin escaneos guardados todavía</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            for scan_id, label, count in scans:
-                btn_key = f"sb_s_{scan_id}"
-                col_l, col_c = st.columns([6, 4], gap="small")
-                with col_l:
-                    if st.button(f"⊕ {label}", key=btn_key,
-                                 use_container_width=True,
-                                 help=f"Cargar {label} ({count} candidatos)"):
-                        _sb_load_scan(scan_id)
-                        st.rerun()
-                with col_c:
-                    st.markdown(
-                        f'<div class="sb-badge-wrap">'
-                        f'<span class="sb-count-badge">{count}'
-                        f'<span class="sb-count-sub">cand.</span>'
-                        f'</span></div>',
-                        unsafe_allow_html=True,
-                    )
+        # ── Historial de ESCANEOS: eliminado ────────────────────────────
+        # Los escaneos ya no se persisten (pesaban demasiado y agotaban la RAM
+        # del servicio), así que esta sección siempre estaría vacía. El escaneo
+        # sigue funcionando con normalidad dentro de la sesión.
 
 
 def render_top_nav():
@@ -951,23 +919,18 @@ def run_market_scan(filters: Optional[dict] = None):
     # (así el usuario ve "0 candidatos" en vez de ser devuelto al home).
     st.session_state._show_scan_results = True
 
-    # Persistir el scan al historial en disco (solo si hay resultados reales)
-    if results:
-        try:
-            from data.persistence import save_scan as disk_save_scan
-            scan_id = disk_save_scan(results)
-            if scan_id:
-                st.session_state.current_scan_id = scan_id
-        except Exception:
-            pass
-        # Conservar solo los N escaneos más recientes. Cada escaneo pesa mucho
-        # (todas las acciones con sus resultados), así que acumularlos era una
-        # fuente grande de consumo de memoria. El recién guardado nunca se borra.
-        try:
-            from data.persistence import prune_old_scans
-            prune_old_scans()
-        except Exception:
-            pass
+    # Los escaneos YA NO SE PERSISTEN. Cada uno pesa muchísimo (cientos de
+    # acciones con todos sus datos) y era la mayor fuente de consumo de RAM en
+    # Render (el servicio excedía su límite de memoria). El escaneo sigue
+    # funcionando igual DENTRO de la sesión (st.session_state.scan_results);
+    # simplemente no se guarda al historial. Además se limpia cualquier escaneo
+    # antiguo que quedara guardado de versiones anteriores.
+    st.session_state.current_scan_id = None
+    try:
+        from data.persistence import prune_old_scans
+        prune_old_scans(0)
+    except Exception:
+        pass
 
     st.rerun()
 

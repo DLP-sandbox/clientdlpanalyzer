@@ -217,8 +217,12 @@ def delete_analysis(ticker: str) -> None:
 # Cuántos análisis/escaneos se conservan. El historial crecía sin límite y cada
 # arranque de sesión cargaba TODO a memoria (~130 KB por análisis), lo que hacía
 # que el servicio excediera su límite de RAM cada pocos días.
-MAX_ANALYSES_ON_DISK = 5
-MAX_SCANS_ON_DISK = 3
+MAX_ANALYSES_ON_DISK = 4
+# 0 = NO se conserva ningún escaneo. Cada escaneo pesa muchísimo (cientos de
+# acciones con todos sus datos) y era la mayor fuente de consumo de RAM en
+# Render. Los escaneos siguen funcionando en la sesión: solo dejan de
+# persistirse en disco/Supabase.
+MAX_SCANS_ON_DISK = 0
 
 
 def prune_old_analyses(keep: int = MAX_ANALYSES_ON_DISK) -> int:
