@@ -3799,6 +3799,71 @@ section[data-testid="stSidebar"] {
 [data-testid="stTabs"] button[data-baseweb="tab"]:nth-of-type(7)::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F1495F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6z'/%3E%3Cline x1='12' y1='8.5' x2='12' y2='13'/%3E%3Ccircle cx='12' cy='16' r='0.7' fill='%23F1495F' stroke='none'/%3E%3C/svg%3E"); }
 
 
+
+/* ── Barra de secciones del análisis (estilo APP-PROYECCION-PORTAFOLIO) ──
+   Radio horizontal como píldora CENTRADA: opciones en mono mayúscula con su
+   PUNTITO; la activa lleva borde redondeado dorado con brillo y el puntito
+   relleno (como en la referencia). El radio nativo de Streamlit se oculta y
+   el puntito lo dibuja p::before (control total del estilo). */
+/* OJO: la clase st-key-sectbar_ va en el PROPIO stVerticalBlock (flex column
+   con align-items:start), no en un padre — por eso hay que centrar aquí mismo:
+   align-items:center alinea horizontalmente al hijo (que se encoge al ancho de
+   su contenido). Con un selector descendiente la barra quedaba a la izquierda. */
+div[class*="st-key-sectbar_"] {
+    margin: 2px 0 16px;
+    align-items: center !important;
+}
+div[class*="st-key-sectbar_"] [data-testid="stElementContainer"] {
+    align-items: center !important;
+}
+div[class*="st-key-sectbar_"] [data-testid="stRadio"] {
+    width: 100% !important; display: flex !important; justify-content: center !important;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] {
+    display: inline-flex !important; justify-content: center; flex-wrap: wrap; gap: 3px;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline-2);
+    border-radius: 16px;
+    padding: 6px;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label {
+    margin: 0 !important; padding: 9px 10px !important; border-radius: 10px !important;
+    border: 1px solid transparent !important; background: transparent !important;
+    cursor: pointer; display: flex !important; align-items: center;
+    transition: background var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                box-shadow var(--dur-2) var(--ease-out);
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label > div:first-child { display: none !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
+    font-family: var(--font-mono) !important; font-size: 11.5px !important;
+    font-weight: 700 !important; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-3) !important; margin: 0 !important;
+    display: flex; align-items: center; white-space: nowrap;
+    transition: color var(--dur-2) var(--ease-out);
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
+    content: ""; width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.28); background: transparent;
+    margin-right: 8px; flex: 0 0 auto;
+    transition: background var(--dur-2) var(--ease-out),
+                border-color var(--dur-2) var(--ease-out),
+                box-shadow var(--dur-2) var(--ease-out);
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:hover { background: rgba(var(--accent-rgb),0.06) !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:hover p { color: var(--text-2) !important; }
+/* Sección ACTIVA: borde redondeado dorado con brillo + texto y puntito dorados */
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) {
+    background: rgba(var(--accent-rgb),0.07) !important;
+    border-color: rgba(var(--accent-rgb),0.55) !important;
+    box-shadow: 0 0 16px rgba(var(--accent-rgb),0.18), inset 0 1px 0 rgba(255,255,255,0.04) !important;
+}
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p { color: var(--accent) !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
+    background: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb),0.6), inset 0 0 0 2.5px rgba(10,11,13,0.55);
+}
+
 </style>
 """
 
