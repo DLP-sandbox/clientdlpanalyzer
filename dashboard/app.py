@@ -1495,8 +1495,12 @@ def render_overview(analysis: StockAnalysis):
 
     with col_snow:
         fig = build_snowflake(analysis.snowflake)
+        # ÚNICA gráfica con hover: al pasar el ratón por un vértice muestra un
+        # pop-up con la categoría y su calificación en grande. Por eso NO lleva
+        # staticPlot (que desactivaría el hover). Zoom/arrastre siguen
+        # bloqueados por _plotly (dragmode=False + sin scrollZoom/doubleClick).
         _plotly(fig, use_container_width=True,
-                        config={"displayModeBar": False, "staticPlot": True},
+                        config={"displayModeBar": False},
                         key=f"chart_overview_snowflake_{analysis.ticker}")
 
     # Fila 2: Desglose por análisis (barras) a todo el ancho, para que se lean
