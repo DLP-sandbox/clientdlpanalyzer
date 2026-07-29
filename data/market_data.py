@@ -410,15 +410,20 @@ def get_company_info(ticker: str) -> dict:
             result["name"] = tv["name"]
 
     # Short interest: si yfinance no lo trajo (None en cloud), completar con
-    # Nasdaq (acciones en corto / float). Si tampoco hay, se queda None → la UI
-    # mostrará "N/D" en vez de un 0% engañoso.
+    # Nasdaq (solo cubre valores del NASDAQ) y, si tampoco, con FINRA, que
+    # incluye TODAS las acciones de EE.UU. — es lo que rescata a las del NYSE
+    # (KO, JPM, XOM…), que antes se quedaban sin dato. Si ninguna lo consigue,
+    # queda None → la UI muestra "N/D" en vez de un 0% engañoso.
     if result.get("short_percent") is None:
-        si = _get_short_interest_from_nasdaq(
-            ticker, float_shares=result.get("float_shares"))
-        if si.get("short_percent") is not None:
-            result["short_percent"] = si["short_percent"]
-        if result.get("short_ratio") is None and si.get("short_ratio") is not None:
-            result["short_ratio"] = si["short_ratio"]
+        _fs = result.get("float_shares")
+        for _src in (_get_short_interest_from_nasdaq, _get_short_interest_from_finra):
+            si = _src(ticker, float_shares=_fs)
+            if si.get("short_percent") is not None:
+                result["short_percent"] = si["short_percent"]
+            if result.get("short_ratio") is None and si.get("short_ratio") is not None:
+                result["short_ratio"] = si["short_ratio"]
+            if result.get("short_percent") is not None:
+                break
 
     _save_cache(key, result)
 
@@ -1339,6 +1344,45 @@ def _get_holders_from_nasdaq(ticker: str) -> dict:
         pass
 
     return result
+
+
+def _get_short_interest_from_finra(ticker: str, float_shares=None) -> dict:
+    """Short interest desde FINRA — cubre TODAS las acciones de EE.UU.,
+    incluidas las del NYSE (KO, JPM, XOM…), que el endpoint de Nasdaq NO trae
+    (solo lista valores del NASDAQ) y por eso quedaban sin dato en producción.
+
+    API pública, sin credenciales. No admite ordenar, así que se piden las filas
+    del ticker y se toma la de settlementDate más reciente. Devuelve
+    {short_percent, short_ratio} (lo que consiga) o {}. NUNCA lanza."""
+    try:
+        from curl_cffi import requests as _creq
+        r = _creq.post(
+            "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest",
+            json={"limit": 400,
+                  "compareFilters": [{"fieldName": "symbolCode",
+                                      "fieldValue": ticker.upper(),
+                                      "compareType": "EQUAL"}]},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=20, impersonate="chrome",
+        )
+        if r.status_code != 200:
+            return {}
+        rows = r.json() or []
+        if not rows:
+            return {}
+        latest = max(rows, key=lambda d: str(d.get("settlementDate") or ""))
+        out = {}
+        dtc = _nasdaq_num(latest.get("daysToCoverQuantity"))
+        if dtc is not None:
+            out["short_ratio"] = dtc
+        qty = _nasdaq_num(latest.get("currentShortPositionQuantity"))
+        fs = _nasdaq_num(float_shares) if float_shares else None
+        if qty is not None and fs and fs > 0:
+            # Mismo formato que yfinance: fracción (0.0112 = 1.12%)
+            out["short_percent"] = qty / fs
+        return out
+    except Exception:
+        return {}
 
 
 def _get_short_interest_from_nasdaq(ticker: str, float_shares=None) -> dict:

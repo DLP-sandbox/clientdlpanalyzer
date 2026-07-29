@@ -737,7 +737,21 @@ def run_analysis(ticker: str):
         # Solo usar caché si la tesis es real (>300 chars) — si es fallback, re-analizar
         thesis_len = len(getattr(existing, "investment_thesis", "") or "")
         _debug_log(f"  cache hit, thesis_len={thesis_len}")
-        if thesis_len > 200:
+        # …y si le falta el short interest ("N/D"): esos análisis se generaron
+        # cuando la fuente no cubría el NYSE (KO, JPM…). Ahora hay respaldo FINRA
+        # para todas las acciones de EE.UU., así que se re-analiza para
+        # completarlo en vez de arrastrar el hueco para siempre.
+        _stale = False
+        try:
+            _inst = (getattr(existing, "reports", {}) or {}).get("institutional")
+            _si = ((getattr(_inst, "key_metrics", {}) or {}).get("short_interest") or "")
+            _stale = str(_si).strip().upper() in ("N/D", "N/A", "—", "")
+        except Exception:
+            _stale = False
+        if _stale:
+            _debug_log("  cached analysis sin short interest → re-analizando")
+            del st.session_state.analyses[ticker]
+        elif thesis_len > 200:
             _debug_log(f"  using cached analysis, rerunning")
             st.session_state.selected_ticker = ticker
             st.session_state.quick_view_ticker = None
