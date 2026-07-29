@@ -109,13 +109,32 @@ class InstitutionalAgent(BaseAgent):
         lines.append(f"**Compras recientes de insiders:** {insider_buys}")
 
         if insider_txns:
+            # BLINDAJE: la capa de datos normaliza las claves en MINÚSCULA
+            # ("insider", "position", "shares", "value", "date"), pero aquí se
+            # leían en mayúscula → todos los insiders salían como "Unknown".
+            # _k() acepta cualquier variante (minúscula, Capitalizada, con
+            # espacios) para que un cambio de formato no vuelva a romperlo.
+            def _k(d, *names, default=None):
+                low = {str(k).lower().replace(" ", "_"): v for k, v in d.items()}
+                for n in names:
+                    v = low.get(str(n).lower().replace(" ", "_"))
+                    if v not in (None, ""):
+                        return v
+                return default
+
             for txn in insider_txns[:10]:
-                date = str(txn.get("Date", ""))[:10]
-                insider = txn.get("Insider", "Unknown")
-                pos = txn.get("Position", "")
-                shares = txn.get("Shares", 0)
-                val = txn.get("Value", 0)
-                lines.append(f"- {date} | {insider} ({pos}): {shares:,} shares | ${val:,.0f}")
+                date = str(_k(txn, "date", "start_date", default=""))[:10]
+                insider = _k(txn, "insider", "filer", default="Unknown")
+                pos = _k(txn, "position", "title", default="")
+                try:
+                    shares = float(_k(txn, "shares", default=0) or 0)
+                except (TypeError, ValueError):
+                    shares = 0.0
+                try:
+                    val = float(_k(txn, "value", default=0) or 0)
+                except (TypeError, ValueError):
+                    val = 0.0
+                lines.append(f"- {date} | {insider} ({pos}): {shares:,.0f} shares | ${val:,.0f}")
 
         lines += [
             "",

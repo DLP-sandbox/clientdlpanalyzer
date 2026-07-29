@@ -1060,11 +1060,25 @@ def _render_status_pills(pills):
             """, unsafe_allow_html=True)
 
 
+def _no_latex(text):
+    """Neutraliza el "$" para que Streamlit NO interprete el texto como LaTeX.
+
+    La prosa generada lleva importes ("$315.32, protección $261.46…") y markdown
+    trata un par de $…$ como fórmula: el tramo salía en cursiva serif ilegible
+    ("206.84,proteccioˊn"). Como TODA esta prosa se pinta con
+    unsafe_allow_html=True, se sustituye por la entidad HTML &#36;, que el
+    navegador muestra como "$" y el parser de markdown/LaTeX ya no ve.
+    Es idempotente y seguro con None."""
+    if text is None:
+        return ""
+    return str(text).replace("$", "&#36;")
+
+
 def _signal_card_html(title, items, kind):
     """Tarjeta única que agrupa las señales (kind = 'pos'|'neg')."""
     cls = "strength-item" if kind == "pos" else "risk-item"
     title_cls = "strength" if kind == "pos" else "risk"
-    rows = "".join(f'<div class="{cls}">{i}</div>' for i in items)
+    rows = "".join(f'<div class="{cls}">{_no_latex(i)}</div>' for i in items)
     return (f'<div class="signal-card signal-card--{kind}">'
             f'<div class="thesis-section-title {title_cls}">{_strip_ui_emoji(title)}</div>'
             f'{rows}</div>')
@@ -1090,7 +1104,7 @@ def _render_analysis_card(report, title="Análisis Detallado"):
         return
     st.markdown(f'<div class="section-title-bar">{_strip_ui_emoji(title)}</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="analysis-card"><div class="analysis-text">{report.analysis}</div></div>',
+        f'<div class="analysis-card"><div class="analysis-text">{_no_latex(report.analysis)}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -1105,7 +1119,7 @@ def _render_insight_card(title, content, color="#E2B25C", icon="💡"):
         <div class="insight-card-header">
             <span class="insight-card-title" style="color:{color};">{_strip_ui_emoji(title)}</span>
         </div>
-        <div class="insight-card-body">{content}</div>
+        <div class="insight-card-body">{_no_latex(content)}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1647,12 +1661,12 @@ def render_overview(analysis: StockAnalysis):
             </div>
             """, unsafe_allow_html=True)
             for veto in analysis.vetos_applied:
-                st.markdown(f'<div class="veto-item">{veto}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="veto-item">{_no_latex(veto)}</div>', unsafe_allow_html=True)
 
     with col_thesis:
         st.markdown("#### Tesis de Inversión")
         st.markdown(
-            f'<div class="analysis-card"><div class="analysis-text">{analysis.investment_thesis}</div></div>',
+            f'<div class="analysis-card"><div class="analysis-text">{_no_latex(analysis.investment_thesis)}</div></div>',
             unsafe_allow_html=True,
         )
 
@@ -1727,7 +1741,7 @@ def render_overview(analysis: StockAnalysis):
                     <span class="alpha-opportunity-icon">⚡</span>
                     <span class="alpha-opportunity-title">Oportunidad Asimétrica</span>
                 </div>
-                <div class="alpha-opportunity-body">{_alpha_txt}</div>
+                <div class="alpha-opportunity-body">{_no_latex(_alpha_txt)}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -2528,7 +2542,7 @@ def render_catalysts(analysis: StockAnalysis):
                 <span class="alpha-opportunity-icon">⚡</span>
                 <span class="alpha-opportunity-title">Catalizador #1 — Potencial Mayor</span>
             </div>
-            <div class="alpha-opportunity-body">{top_cat}</div>
+            <div class="alpha-opportunity-body">{_no_latex(top_cat)}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -2764,7 +2778,7 @@ def render_sentiment(analysis: StockAnalysis):
                 <span class="alpha-opportunity-icon">⚡</span>
                 <span class="alpha-opportunity-title">Divergencia Sentimiento-Fundamentales</span>
             </div>
-            <div class="alpha-opportunity-body">{opportunity}</div>
+            <div class="alpha-opportunity-body">{_no_latex(opportunity)}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -2994,7 +3008,7 @@ def render_risk(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Análisis Completo de Riesgo</div>',
                     unsafe_allow_html=True)
         st.markdown(
-            f'<div class="analysis-card"><div class="analysis-text">{_risk_prose}</div></div>',
+            f'<div class="analysis-card"><div class="analysis-text">{_no_latex(_risk_prose)}</div></div>',
             unsafe_allow_html=True,
         )
     else:
@@ -3043,7 +3057,7 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
     with col_conv:
         st.markdown(f"#### {icon} {report.agent_name}")
         st.markdown(
-            f'<div class="analysis-card"><div class="analysis-text">{report.analysis}</div></div>',
+            f'<div class="analysis-card"><div class="analysis-text">{_no_latex(report.analysis)}</div></div>',
             unsafe_allow_html=True,
         )
 
