@@ -3812,6 +3812,27 @@ section[data-testid="stSidebar"] {
 div[class*="st-key-sectbar_"] {
     margin: 2px 0 16px;
     align-items: center !important;
+    /* Ancla del separador ::after. position:relative NO altera el layout. */
+    position: relative;
+}
+/* Línea separadora dorada con brillo entre el menú y la sección de abajo.
+   Va como ::after ABSOLUTO dentro del hueco de 16px que YA existía (margin
+   inferior): no ocupa espacio, así que ni el menú ni el contenido se mueven
+   un solo píxel. Degradado a los extremos para que no corte en seco. */
+div[class*="st-key-sectbar_"]::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -8px;
+    height: 1px;
+    background: linear-gradient(90deg,
+        rgba(var(--accent-rgb), 0) 0%,
+        rgba(var(--accent-rgb), 0.55) 18%,
+        rgba(var(--accent-rgb), 0.75) 50%,
+        rgba(var(--accent-rgb), 0.55) 82%,
+        rgba(var(--accent-rgb), 0) 100%);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.45),
+                0 0 2px rgba(var(--accent-rgb), 0.60);
+    pointer-events: none;
 }
 div[class*="st-key-sectbar_"] [data-testid="stElementContainer"] {
     align-items: center !important;
