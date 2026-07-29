@@ -3855,7 +3855,18 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label {
                 border-color var(--dur-2) var(--ease-out),
                 box-shadow var(--dur-2) var(--ease-out);
 }
+/* Oculta el indicador NATIVO del radio (el círculo de Streamlit y el propio
+   <input>): el puntito lo dibujamos nosotros con p::before. Sin esto, algunos
+   navegadores pintan también el input nativo → salían DOS puntos al
+   seleccionar. El input se mantiene en el DOM (invisible) para que el click en
+   la etiqueta siga funcionando igual. */
 div[class*="st-key-sectbar_"] [role="radiogroup"] label > div:first-child { display: none !important; }
+div[class*="st-key-sectbar_"] [role="radiogroup"] label input[type="radio"] {
+    appearance: none !important; -webkit-appearance: none !important;
+    position: absolute !important; opacity: 0 !important;
+    width: 0 !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
+    border: 0 !important; background: none !important; pointer-events: none !important;
+}
 div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
     font-family: var(--font-mono) !important; font-size: 11.5px !important;
     font-weight: 700 !important; text-transform: uppercase; letter-spacing: .04em;
@@ -3883,6 +3894,37 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p { c
 div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
     background: var(--accent); border-color: var(--accent);
     box-shadow: 0 0 8px rgba(var(--accent-rgb),0.6), inset 0 0 0 2.5px rgba(10,11,13,0.55);
+}
+
+/* ── Iframe estrecho (Whop): el menú DEBE quedar en UNA SOLA HILERA ──────
+   flex-wrap:nowrap lo garantiza pase lo que pase (con scroll horizontal como
+   red de seguridad), y se reduce todo — fuente, padding, gap — para que quepa.
+   El puntito solo se dibuja en la opción ACTIVA: ahorra mucho ancho sin perder
+   el indicador de selección. */
+@media (max-width: 760px) {
+    div[class*="st-key-sectbar_"] [role="radiogroup"] {
+        flex-wrap: nowrap !important;
+        max-width: 100%;
+        overflow-x: auto;
+        gap: 1px;
+        padding: 3px;
+        border-radius: 11px;
+        scrollbar-width: none;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"]::-webkit-scrollbar { display: none; }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label {
+        padding: 6px 3px !important; border-radius: 8px !important; flex: 0 0 auto;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p {
+        font-size: 7.1px !important; letter-spacing: 0 !important;
+    }
+    /* Sin puntito en las inactivas (solo texto) → el menú encoge de verdad */
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label p::before {
+        width: 0; height: 0; border-width: 0; margin-right: 0;
+    }
+    div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::before {
+        width: 6px; height: 6px; border-width: 1.5px; margin-right: 5px;
+    }
 }
 
 </style>
