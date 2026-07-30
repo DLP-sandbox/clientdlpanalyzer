@@ -1547,7 +1547,48 @@ def _score_sentiment(news, info):
     }
 
 
-def _score_catalysts(earnings, info):
+def _dias_txt(n) -> str:
+    """'hoy' · 'mañana' · '1 día' · '28 días'. Evita el feo 'en 1 días'."""
+    try:
+        n = int(n)
+    except Exception:
+        return ""
+    return "hoy" if n <= 0 else "mañana" if n == 1 else f"{n} días"
+
+
+def _en_txt(n) -> str:
+    """Como _dias_txt pero listo para meter en una frase: 'hoy', 'mañana',
+    'en 28 días' — nunca el feo 'en mañana'."""
+    t = _dias_txt(n)
+    return t if t in ("", "hoy", "mañana") else f"en {t}"
+
+
+def _ev_cuando(e) -> str:
+    """Cómo se nombra el momento de un evento en prosa: 'el 10 sep 2026 (en 43
+    días)', '~sep 2026 (en unos 43 días)' o 'según titulares recientes'."""
+    try:
+        dias = e.get("dias")
+        if dias is None:
+            return "según titulares recientes"
+        fecha = e.get("fecha_txt") or ""
+        cuanto = _en_txt(dias)
+        if e.get("confirmado"):
+            return f"el {fecha} ({cuanto})" if fecha else cuanto
+        return f"hacia {fecha} ({cuanto})" if fecha else cuanto
+    except Exception:
+        return ""
+
+
+_EV_ETIQUETA = {
+    "producto":    "catalizador de producto",
+    "negocio":     "catalizador de negocio",
+    "dividendo":   "hito para el accionista",
+    "corporativo": "evento corporativo",
+    "resultados":  "reporte de resultados",
+}
+
+
+def _score_catalysts(earnings, info, events=None):
     days = earnings.get("days_to_next_earnings")
     beat = earnings.get("beat_count")
     hist = earnings.get("earnings_history", []) or []
@@ -1560,6 +1601,35 @@ def _score_catalysts(earnings, info):
         em += _lin(avg_surp, -10, 15, -8, 10)
     em = _clamp(em, 6, 34)
 
+    # ── Agenda de OTROS catalizadores (keynotes, lanzamientos, contratos…) ──
+    # Llega de data.corporate_events.get_upcoming_catalysts. Si no llega o viene
+    # vacía, TODO lo que sigue es exactamente igual que antes (score incluido).
+    eventos = []
+    try:
+        for e in (events or []):
+            if not isinstance(e, dict):
+                continue
+            # 'dias' normalizado a int o None: un análisis guardado con el dato
+            # corrupto no puede tumbar las comparaciones de más abajo.
+            e = dict(e)
+            try:
+                d = e.get("dias")
+                e["dias"] = None if d is None else int(d)
+            except (TypeError, ValueError):
+                e["dias"] = None
+            eventos.append(e)
+    except Exception:
+        eventos = []
+    otros_90 = [e for e in eventos
+                if e.get("tipo") != "resultados"
+                and e.get("dias") is not None and e["dias"] <= 90]
+    otros_180 = [e for e in eventos
+                 if e.get("tipo") != "resultados"
+                 and e.get("dias") is not None and e["dias"] <= 180]
+    senales = [e for e in eventos if e.get("dias") is None]
+    prox_evento = next((e for e in eventos if e.get("dias") is not None), None)
+    prox_otro = otros_180[0] if otros_180 else (senales[0] if senales else None)
+
     # catalyst_quality (0-33): proximidad del próximo earnings
     if days is None:
         cq = 17.0
@@ -1569,6 +1639,10 @@ def _score_catalysts(earnings, info):
         cq = _lin(days, 30, 90, 24, 17)
     else:
         cq = _lin(days, 90, 200, 17, 11)
+    # Bono por DENSIDAD de catalizadores: una acción con keynote, contrato o
+    # evento corporativo próximo tiene más catalizadores que una que solo
+    # espera a resultados. Con tope, para que no infle el score.
+    cq += min(len(otros_90) * 2.0, 5.0) + (1.5 if senales else 0.0)
     cq = _clamp(cq, 9, 33)
 
     # analyst_revision_trend (0-33): proxy por beat rate
@@ -1585,15 +1659,38 @@ def _score_catalysts(earnings, info):
 
     pros, cons = [], []
     if days is not None and days <= 30:
-        pros.append(f"Reporte de resultados próximo (en {days} días): catalizador cercano que puede mover el precio")
+        pros.append(f"Reporte de resultados próximo ({_en_txt(days)}): catalizador cercano que puede mover el precio")
+    # Otros eventos del calendario: se nombran uno a uno, con su fecha.
+    for e in otros_90[:2]:
+        pros.append(f"{e.get('titulo', 'Evento')} {_ev_cuando(e)}: "
+                    f"{_EV_ETIQUETA.get(e.get('tipo'), 'catalizador')} adicional al reporte de resultados")
+    for e in senales[:1]:
+        pros.append(f"{e.get('etiqueta') or 'Movimiento'} en titulares recientes: «{str(e.get('titulo', ''))[:90]}»")
     if beat is not None and total and beat / total >= 0.6:
         pros.append(f"Buen historial superando el consenso de beneficios ({beat} de {total} trimestres)")
     if avg_surp is not None and avg_surp > 3:
         pros.append(f"Sorpresa promedio positiva sobre el consenso ({_pct(avg_surp, signed=True)})")
-    if days is not None and days > 120:
-        cons.append("El próximo reporte de resultados está lejano: poco catalizador a corto plazo")
+    if len(otros_90) + (1 if (days or 999) <= 90 else 0) >= 3:
+        pros.append("Agenda cargada: varios catalizadores concentrados en los próximos 90 días")
+
+    if days is not None and days > 120 and not otros_90:
+        cons.append("El próximo reporte de resultados está lejano y no hay otros eventos cerca: "
+                    "poco catalizador a corto plazo")
+    elif days is not None and days > 120:
+        cons.append("El reporte de resultados está lejano: hasta entonces la tesis depende de eventos menores")
+    if days is not None and days <= 7:
+        cons.append(f"El reporte de resultados es inminente ({_en_txt(days)}): el precio puede reaccionar "
+                    f"con fuerza en cualquiera de las dos direcciones")
     if beat is not None and total and beat / total < 0.4:
         cons.append("Historial flojo en resultados: decepciona más veces de las que supera el consenso")
+    if eventos and not otros_180 and not senales:
+        cons.append("Fuera de los resultados no hay eventos señalados en los próximos 6 meses: "
+                    "la acción se mueve sobre todo con el mercado")
+    # Concentración: dos catalizadores casi el mismo día amplifican el movimiento.
+    if days is not None and any(abs((e.get("dias") or 9999) - days) <= 7 for e in otros_90):
+        cons.append("Dos catalizadores coinciden casi en la misma fecha: la reacción del precio puede amplificarse")
+    if senales and any(e.get("tipo") == "negocio" for e in senales):
+        cons.append("Hay noticias de operaciones o contratos sin confirmar en detalle: el impacto real aún no es medible")
     if not pros:
         pros.append("Calendario de catalizadores dentro de lo normal")
     if not cons:
@@ -1601,17 +1698,65 @@ def _score_catalysts(earnings, info):
 
     # ── Análisis de catalizadores: prosa estructurada en español ─────────────
     partes = []
+    # Apertura: retrato del calendario completo (solo si hay agenda que contar).
+    n_90 = len(otros_90) + (1 if (days is not None and days <= 90) else 0)
+    if eventos:
+        if n_90 >= 3:
+            partes.append(
+                f"El calendario está cargado: hay {n_90} eventos en los próximos 90 días. Cuando los "
+                f"catalizadores se acumulan, el precio suele moverse más de lo habitual en poco tiempo, "
+                f"tanto a favor como en contra.")
+        elif n_90 == 2:
+            partes.append(
+                "Hay dos catalizadores en los próximos 90 días, así que la acción tiene citas concretas "
+                "en el horizonte y no depende solo de la deriva general del mercado.")
+        elif n_90 == 1:
+            partes.append(
+                "El calendario de los próximos 90 días tiene un único evento relevante: casi toda la "
+                "atención se concentrará en él.")
+        else:
+            partes.append(
+                "No hay eventos señalados en los próximos 90 días: en este tramo la acción tenderá a "
+                "seguir al mercado y a su sector más que a una noticia propia.")
+
     if days is not None:
         prox = ("muy cercano" if days <= 14 else "cercano" if days <= 45 else
                 "de medio plazo" if days <= 120 else "lejano")
+        _cuando = _dias_txt(days)
+        _cuando = _cuando if _cuando in ("hoy", "mañana") else f"en unos {_cuando}"
         partes.append(
-            f"El catalizador principal a la vista es el próximo reporte de resultados, previsto en unos "
-            f"{days} días ({prox}). Los reportes trimestrales son los eventos que más mueven el precio a "
+            f"El catalizador principal a la vista es el próximo reporte de resultados, previsto "
+            f"{_cuando} ({prox}). Los reportes trimestrales son los eventos que más mueven el precio a "
             f"corto plazo, porque confirman o desmienten la tesis con números reales.")
     else:
         partes.append(
             "Aún no hay fecha confirmada para el próximo reporte de resultados —el catalizador de corto "
             "plazo más relevante—; conviene revisarla cerca de la temporada de resultados.")
+
+    # Otros eventos del calendario, nombrados uno a uno.
+    if otros_180:
+        listado = "; ".join(f"«{e.get('titulo', 'evento')}» {_ev_cuando(e)}" for e in otros_180[:3])
+        partes.append(
+            f"Pero los resultados no son lo único en la agenda: {listado}. Este tipo de citas —keynotes, "
+            f"lanzamientos, contratos o hitos para el accionista— mueven el precio por una vía distinta a "
+            f"la de los números trimestrales: cambian la expectativa sobre el negocio futuro, no sobre el "
+            f"trimestre que acaba de cerrar.")
+        if any(not e.get("confirmado") for e in otros_180[:3]):
+            partes.append(
+                "Las fechas de los eventos recurrentes son aproximadas —se repiten cada año en las mismas "
+                "semanas—, así que conviene confirmarlas cuando la compañía las anuncie oficialmente.")
+
+    # Señales vivas detectadas en titulares (cobertura universal).
+    if senales:
+        s = senales[0]
+        resto = (f" Hay {len(senales) - 1} señal más en la misma línea." if len(senales) == 2 else
+                 f" Hay {len(senales) - 1} señales más en la misma línea." if len(senales) > 2 else "")
+        partes.append(
+            f"Además, los titulares recientes apuntan a un catalizador ya en marcha "
+            f"({str(s.get('etiqueta') or 'movimiento corporativo').lower()}): «{str(s.get('titulo', ''))[:120]}»."
+            f"{resto} Son eventos que ya están afectando a la narrativa, aunque su impacto en las cuentas "
+            f"tarde varios trimestres en verse.")
+
     if beat is not None and total:
         ratio = beat / total
         cal = ("un historial muy sólido" if ratio >= 0.75 else "un buen historial" if ratio >= 0.6 else
@@ -1630,11 +1775,51 @@ def _score_catalysts(earnings, info):
         partes.append(
             f"La sorpresa promedio frente a lo esperado es {signo} ({_pct(avg_surp, signed=True)}), con una "
             f"tendencia {trend}: {matiz}.")
-    cierre = ("el calendario juega a favor: hay un evento cercano y con antecedentes de sorpresas positivas."
-              if (days is not None and days <= 45 and (avg_surp or 0) > 0) else
-              "el próximo reporte será la prueba clave, así que conviene no anticiparse hasta ver los números.")
+    if days is not None and days <= 45 and (avg_surp or 0) > 0 and otros_90:
+        cierre = ("el calendario juega claramente a favor: hay varios eventos cerca y la compañía llega "
+                  "con antecedentes de sorpresas positivas. El riesgo, en este escenario, no es la falta "
+                  "de catalizadores sino que buena parte de la buena noticia ya esté en el precio.")
+    elif days is not None and days <= 45 and (avg_surp or 0) > 0:
+        cierre = ("el calendario juega a favor: hay un evento cercano y con antecedentes de sorpresas "
+                  "positivas, aunque todo se juega a una sola carta.")
+    elif otros_90 and (days is None or days > 45):
+        cierre = ("aunque los resultados quedan lejos, la agenda de producto y negocio mantiene motivos "
+                  "para que la acción se mueva por méritos propios antes de esa fecha.")
+    elif senales and not otros_90:
+        cierre = ("el impulso a corto plazo depende más de lo que ya está en los titulares que de una "
+                  "fecha marcada en el calendario: conviene seguir cómo evoluciona esa noticia.")
+    elif not eventos or (not otros_180 and days is not None and days > 90):
+        cierre = ("no hay catalizadores propios a la vista, así que a corto plazo la acción dependerá "
+                  "sobre todo del mercado y de su sector; la paciencia pesa más que el timing.")
+    else:
+        cierre = ("el próximo reporte será la prueba clave, así que conviene no anticiparse hasta ver "
+                  "los números.")
     partes.append("En conjunto, " + cierre)
     catalysts_analysis = " ".join(partes)
+
+    # ── Evento estrella (top_catalyst): el más cercano, sea o no earnings ────
+    if prox_evento is not None and prox_evento.get("tipo") != "resultados":
+        top_catalyst = (
+            f"{prox_evento.get('titulo', 'Evento')} — {_ev_cuando(prox_evento)} — es la próxima cita del "
+            f"calendario y el evento con más capacidad de reajustar la tesis a corto plazo"
+            + (f", por delante del reporte de resultados ({_en_txt(days)})." if days is not None else ".")
+        )
+    elif prox_otro is not None and days is not None and days > 60:
+        top_catalyst = (
+            f"Con los resultados a {_dias_txt(days)} vista, la cita más relevante del tramo corto es "
+            f"«{prox_otro.get('titulo', 'el próximo evento')}», {_ev_cuando(prox_otro)}."
+        )
+    else:
+        top_catalyst = (
+            f"El próximo reporte de resultados ({earnings.get('next_earnings', 'fecha por confirmar')}"
+            f"{', ' + _en_txt(days) if days is not None else ''}"
+            f") es el evento que puede "
+            f"reajustar la tesis a corto plazo: conviene tenerlo en el radar."
+        )
+    if prox_otro is not None and prox_evento is not None and \
+            prox_evento.get("tipo") == "resultados" and days is not None and days <= 60:
+        top_catalyst += (f" Justo después llega «{prox_otro.get('titulo', '')}», "
+                         f"{_ev_cuando(prox_otro)}.")
 
     return {
         "score": score,
@@ -1648,24 +1833,32 @@ def _score_catalysts(earnings, info):
             "avg_earnings_surprise": _pct(avg_surp, signed=True),
             "analyst_sentiment_trend": trend,
             "catalyst_timeline": timeline,
-            "key_upcoming_event": f"Reporte de resultados · {earnings.get('next_earnings', 'fecha por confirmar')}",
+            "key_upcoming_event": (
+                f"{prox_evento.get('titulo')} · {prox_evento.get('fecha_txt')}"
+                if prox_evento is not None else
+                f"Reporte de resultados · {earnings.get('next_earnings', 'fecha por confirmar')}"),
+            # Nuevas (aditivas): la UI las usa si están, y si no, ni se enteran.
+            "next_event": (f"{prox_otro.get('titulo')} · {prox_otro.get('fecha_txt')}"
+                           if prox_otro is not None else "N/A"),
+            "events_90d": str(n_90) if eventos else "N/A",
         },
         "sub_scores": {
             "earnings_momentum": round(em, 1),
             "catalyst_quality": round(cq, 1),
             "analyst_revision_trend": round(art, 1),
         },
-        "top_catalyst": (
-            f"El próximo reporte de resultados ({earnings.get('next_earnings', 'fecha por confirmar')}"
-            f"{', en ' + str(days) + ' días' if days is not None else ''}) es el evento que puede "
-            f"reajustar la tesis a corto plazo: conviene tenerlo en el radar."
-        ),
+        "top_catalyst": top_catalyst,
+        # Agenda completa para que el dashboard la pinte. Serializable (la fecha
+        # va como texto) para que sobreviva al guardado del análisis.
+        "events": [
+            {k: v for k, v in e.items() if k != "fecha"} for e in eventos[:8]
+        ],
     }
 
 
-def score_market_context(macro, news, earnings, info):
+def score_market_context(macro, news, earnings, info, events=None):
     return {
         "macro": _score_macro(macro, info),
         "sentiment": _score_sentiment(news, info),
-        "catalysts": _score_catalysts(earnings, info),
+        "catalysts": _score_catalysts(earnings, info, events),
     }

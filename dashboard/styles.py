@@ -1600,6 +1600,119 @@ hr {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
+   AGENDA DE CATALIZADORES — línea temporal de próximos eventos
+   (resultados, keynotes, lanzamientos, contratos, ex-dividendo)
+   ───────────────────────────────────────────────────────────────────── */
+.cat-agenda {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 6px 18px 8px 18px;
+    margin: 2px 0 6px 0;
+    box-shadow: var(--inset-hi), var(--shadow-1);
+}
+
+.cat-ev {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--hairline);
+    position: relative;
+}
+.cat-ev:last-child { border-bottom: none; }
+
+/* Rail izquierdo: fecha en mono + punto de color por tipo */
+.cat-ev-when {
+    flex: 0 0 78px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    padding-top: 1px;
+}
+.cat-ev-date {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-hi);
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+.cat-ev-in {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--text-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.cat-ev-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 5px;
+    background: var(--text-3);
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.03);
+}
+.cat-ev--resultados  .cat-ev-dot { background: var(--accent); }
+.cat-ev--producto    .cat-ev-dot { background: var(--info); }
+.cat-ev--negocio     .cat-ev-dot { background: var(--pos); }
+.cat-ev--dividendo   .cat-ev-dot { background: var(--purple); }
+.cat-ev--corporativo .cat-ev-dot { background: var(--text-2); }
+
+.cat-ev-body { flex: 1 1 auto; min-width: 0; }
+
+.cat-ev-title {
+    color: var(--text-hi);
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1.45;
+}
+
+.cat-ev-meta {
+    margin-top: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.cat-ev-tag {
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: var(--r-xs);
+    border: 1px solid var(--hairline-2);
+    color: var(--text-2);
+    background: rgba(255,255,255,0.02);
+    white-space: nowrap;
+}
+.cat-ev--resultados  .cat-ev-tag--tipo { color: var(--accent); border-color: rgba(var(--accent-rgb),0.3); }
+.cat-ev--producto    .cat-ev-tag--tipo { color: var(--info);   border-color: rgba(var(--info-rgb),0.3); }
+.cat-ev--negocio     .cat-ev-tag--tipo { color: var(--pos);    border-color: rgba(var(--pos-rgb),0.3); }
+.cat-ev--dividendo   .cat-ev-tag--tipo { color: var(--purple); border-color: rgba(var(--purple-rgb),0.3); }
+
+.cat-ev-src {
+    font-size: 0.68rem;
+    color: var(--text-3);
+}
+
+@media (max-width: 640px) {
+    .cat-agenda   { padding: 4px 13px 6px 13px; }
+    .cat-ev       { gap: 10px; padding: 11px 0; }
+    .cat-ev-when  { flex: 0 0 66px; }
+    .cat-ev-date  { font-size: 0.68rem; }
+    .cat-ev-title { font-size: 0.79rem; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    AGENT TAB DASHBOARDS: header, status pills, insight cards, section bar
    ───────────────────────────────────────────────────────────────────── */
 
@@ -3261,6 +3374,14 @@ section[data-testid="stSidebar"] {
     line-height: 1.3;
     word-break: break-word;
     min-width: 0;
+}
+
+/* La Descripción del negocio puede ocupar más de 2 líneas: se le quita el
+   recorte para que se expanda hacia abajo en vez de cortarse con "…". */
+.overview-info-value--desc {
+    display: block;
+    -webkit-line-clamp: none;
+    overflow: visible;
 }
 
 /* ── 22. SECTION SPINNERS — para Tickers Populares y Live Market Pulse ──

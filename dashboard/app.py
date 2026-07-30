@@ -1554,20 +1554,52 @@ def render_overview(analysis: StockAnalysis):
 
     with col_info:
         st.markdown("#### Información")
-        info_data = {
-            "Empresa":   analysis.company_name,
-            "Ticker":    analysis.ticker,
-            "Sector":    analysis.sector,
-            "Horizonte": analysis.time_horizon,
-        }
+        # Info en vivo (cacheada 60s): de aquí salen sector e industria, que
+        # tienen respaldo TradingView y por tanto llegan también en Render.
+        from data.market_data import get_company_info, get_risk_levels
+        _live_info = get_company_info(analysis.ticker) or {}
+
+        # Descripción del negocio SIN IA: se traduce la industria con un mapa
+        # estático (data/industry_labels.py). La descripción larga de yfinance
+        # no sirve aquí — viene en inglés y en Render llega vacía.
+        #
+        # BLINDAJE: si no se consigue el dato (acción poco conocida, fuentes
+        # caídas, o incluso si el módulo fallara al importar), la fila
+        # simplemente NO SE PINTA. Nunca se muestra "—", "Unknown" ni un error:
+        # se construye el diccionario solo con lo que tiene valor real.
+        try:
+            from data.industry_labels import sector_es, describe_business
+            _sector_txt = sector_es(_live_info.get("sector") or analysis.sector)
+            _desc_txt = describe_business(_live_info.get("industry"),
+                                          _live_info.get("sector") or analysis.sector)
+        except Exception:
+            _sector_txt = _desc_txt = ""
+
+        def _hay(v):
+            """Solo se pinta una fila si su valor es texto útil de verdad."""
+            return bool(v) and str(v).strip().lower() not in (
+                "", "—", "-", "n/a", "n/d", "none", "unknown", "nan")
+
+        info_data = {}
+        if _hay(analysis.company_name):
+            info_data["Empresa"] = analysis.company_name
+        if _hay(_sector_txt):
+            info_data["Sector"] = _sector_txt
+        if _hay(_desc_txt):
+            info_data["Descripción"] = _desc_txt
+
         for k, v in info_data.items():
-            # Layout grid (NO flex) — evita que key y value se solapen
-            # cuando el value es largo (típicamente el Horizonte). El value
-            # se limita a 2 líneas con line-clamp; resto se trunca con "...".
+            # Layout grid (NO flex) — evita que key y value se solapen cuando el
+            # value es largo. La Descripción lleva un modificador que le quita el
+            # recorte de 2 líneas: se expande hacia abajo en vez de cortarse
+            # con "…" (hay espacio de sobra en esta columna).
+            cls = "overview-info-value"
+            if k == "Descripción":
+                cls += " overview-info-value--desc"
             st.markdown(
                 f'<div class="overview-info-row">'
                 f'<span class="overview-info-key">{k}</span>'
-                f'<span class="overview-info-value">{v}</span>'
+                f'<span class="{cls}">{_no_latex(v)}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -2537,6 +2569,82 @@ def render_catalysts(analysis: StockAnalysis):
          "value": sentiment_display, "color": sent_color,
          "tooltip": "Dirección de las revisiones de estimaciones y ratings del consenso (factor de momentum potente)."},
     ])
+
+    # ── Agenda de próximos eventos (más allá de los resultados) ──
+    # Se recalcula EN VIVO al renderizar (igual que el resto del dashboard) y
+    # si algo fallara cae al que se guardó con el análisis. Si no hay eventos,
+    # el bloque simplemente no se pinta y la sección queda como antes.
+    eventos = []
+    try:
+        from data.corporate_events import get_upcoming_catalysts
+        from data.market_data import get_company_info, get_news
+        eventos = get_upcoming_catalysts(analysis.ticker,
+                                         get_company_info(analysis.ticker) or {},
+                                         earnings,
+                                         get_news(analysis.ticker, max_items=15))
+    except Exception:
+        eventos = []
+    if not eventos:
+        try:
+            eventos = [e for e in (rd.get("events") or []) if isinstance(e, dict)]
+        except Exception:
+            eventos = []
+
+    if eventos:
+        st.markdown('<div class="section-title-bar">Agenda de Próximos Eventos</div>',
+                    unsafe_allow_html=True)
+        _tipos_es = {"resultados": "Resultados", "producto": "Producto",
+                     "negocio": "Negocio", "dividendo": "Dividendo",
+                     "corporativo": "Corporativo"}
+        filas = []
+        for ev in eventos[:6]:
+            try:
+                tipo = str(ev.get("tipo") or "corporativo")
+                try:
+                    dias = None if ev.get("dias") is None else int(ev["dias"])
+                except (TypeError, ValueError):
+                    dias = None
+                fecha = _no_latex(str(ev.get("fecha_txt") or "—"))
+                if dias is None:
+                    fecha_html = '<div class="cat-ev-date">Ahora</div>'
+                    en_html = '<div class="cat-ev-in">En titulares</div>'
+                else:
+                    # 'sep 2026' → 'sep' · pero se conserva el año cuando NO es
+                    # el actual, para que un evento de 2027 no parezca de este año.
+                    partes_f = fecha.split(" ")
+                    from datetime import date as _date
+                    if len(partes_f) > 1 and partes_f[-1] == str(_date.today().year):
+                        etiqueta_f = " ".join(partes_f[:-1]) or fecha
+                    else:
+                        etiqueta_f = fecha
+                    fecha_html = f'<div class="cat-ev-date">{etiqueta_f}</div>'
+                    en_html = (f'<div class="cat-ev-in">'
+                               f'{"hoy" if dias <= 0 else "mañana" if dias == 1 else f"en {dias} d"}'
+                               f'</div>')
+                confirmado = bool(ev.get("confirmado"))
+                tag_conf = ("Confirmado" if confirmado else
+                            "Aprox." if dias is not None else "Sin fecha")
+                fuente = _no_latex(str(ev.get("fuente") or ""))
+                filas.append(f"""
+        <div class="cat-ev cat-ev--{tipo}">
+            <div class="cat-ev-when">{fecha_html}{en_html}</div>
+            <div class="cat-ev-dot"></div>
+            <div class="cat-ev-body">
+                <div class="cat-ev-title">{_no_latex(str(ev.get("titulo") or "Evento"))}</div>
+                <div class="cat-ev-meta">
+                    <span class="cat-ev-tag cat-ev-tag--tipo">{_tipos_es.get(tipo, "Evento")}</span>
+                    <span class="cat-ev-tag">{tag_conf}</span>
+                    <span class="cat-ev-src">{fuente}</span>
+                </div>
+            </div>
+        </div>""")
+            except Exception:
+                continue
+        if filas:
+            st.markdown(f'<div class="cat-agenda">{"".join(filas)}</div>',
+                        unsafe_allow_html=True)
+            st.caption("Los eventos recurrentes (keynotes, conferencias) usan la fecha habitual "
+                       "de cada año y se marcan como aproximados hasta que la compañía los confirma.")
 
     # ── Historial de Earnings Surprises (bar chart) ──
     if eh and len(eh) >= 2:

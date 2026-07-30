@@ -107,11 +107,22 @@ class MarketContextAgent(BaseAgent):
             earnings = get_earnings_data(ticker)
             info = get_company_info(ticker)
 
+            # Agenda de catalizadores MÁS ALLÁ de los resultados: keynotes y
+            # conferencias de producto, lanzamientos, contratos, ex-dividendo.
+            # Va en su propio try/except y el módulo no toca la red (calendario
+            # curado) → si algo fallara, events=[] y todo sigue como antes.
+            events = []
+            try:
+                from data.corporate_events import get_upcoming_catalysts
+                events = get_upcoming_catalysts(ticker, info, earnings, news)
+            except Exception:
+                events = []
+
             # Versión SIN IA: scoring por código (no gasta créditos de API).
             # Devuelve {"macro":{...}, "sentiment":{...}, "catalysts":{...}} con
             # la misma estructura que antes producía el LLM.
             from agents.code_engine import score_market_context
-            result = score_market_context(macro, news, earnings, info)
+            result = score_market_context(macro, news, earnings, info, events)
 
             # Si la llamada falló completamente, devolver 3 safe reports
             if "error" in result and "macro" not in result and "score" not in result:
@@ -174,6 +185,8 @@ class MarketContextAgent(BaseAgent):
                     "top_catalyst": c.get("top_catalyst", ""),
                     "next_earnings": earnings.get("next_earnings"),
                     "beat_count": earnings.get("beat_count", 0),
+                    # Agenda para que el dashboard la pinte (ya serializable).
+                    "events": c.get("events", []),
                 },
             )
 

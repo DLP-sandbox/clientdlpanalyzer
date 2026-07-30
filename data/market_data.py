@@ -293,6 +293,18 @@ def get_live_price(ticker: str) -> Optional[float]:
 
 # ── Información de la empresa ─────────────────────────────────────────────
 
+def _ts_to_date(ts):
+    """Timestamp unix (o ya-string) → 'YYYY-MM-DD'. "" si no se puede. NUNCA lanza."""
+    try:
+        if ts is None or ts == "":
+            return ""
+        if isinstance(ts, (int, float)):
+            return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d")
+        return str(ts)[:10]
+    except Exception:
+        return ""
+
+
 def get_company_info(ticker: str) -> dict:
     key = f"info_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_COMPANY_INFO)
@@ -350,6 +362,9 @@ def get_company_info(ticker: str) -> dict:
         "ev_ebitda":       info.get("enterpriseToEbitda", None),
         "peg_ratio":       info.get("pegRatio", None),
         "dividend_yield":  info.get("dividendYield", 0),
+        # Fecha ex-dividendo (timestamp unix → 'YYYY-MM-DD'). Solo la usa la
+        # agenda de catalizadores; si falta, ese evento simplemente no se pinta.
+        "ex_dividend_date": _ts_to_date(info.get("exDividendDate")),
         "target_price":    info.get("targetMeanPrice", 0),
         "analyst_rating":  info.get("recommendationKey", ""),
         "earnings_date":   str(info.get("earningsTimestamp", "")),
@@ -1546,6 +1561,75 @@ def get_holders_data(ticker: str) -> dict:
 
 # ── Noticias ───────────────────────────────────────────────────────────────
 
+def _nasdaq_ago_hours(ago: str):
+    """'13 minutes ago' → 0.2 · '3 hours ago' → 3.0 · '2 days ago' → 48.0.
+    None si no se reconoce. NUNCA lanza."""
+    try:
+        import re as _re
+        m = _re.search(r"(\d+)\s*(minute|hour|day|week|month)", str(ago or "").lower())
+        if not m:
+            return None
+        n = float(m.group(1))
+        return n * {"minute": 1 / 60, "hour": 1.0, "day": 24.0,
+                    "week": 168.0, "month": 720.0}[m.group(2)]
+    except Exception:
+        return None
+
+
+def _get_news_from_nasdaq(ticker: str, max_items: int = 15) -> list[dict]:
+    """Respaldo de noticias vía Nasdaq cuando yfinance no devuelve nada (lo
+    normal en cloud/Render, donde Yahoo bloquea las IPs de datacenter). Mismo
+    formato de salida que get_news. Devuelve [] si falla. NUNCA lanza."""
+    try:
+        data = _nasdaq_json(
+            f"/api/news/topic/articlebysymbol?q={ticker.upper()}|stocks"
+            f"&offset=0&limit={max(int(max_items) * 2, 10)}"
+        )
+        rows = ((data or {}).get("rows")) or []
+        if not rows:
+            return []
+        now = datetime.now()
+        out = []
+        for r in rows:
+            try:
+                title = str((r or {}).get("title") or "").strip()
+                if not title:
+                    continue
+                # Descartar refritos de mercado que citan decenas de tickers:
+                # no son noticias DE la compañía y ensucian el análisis.
+                if len((r or {}).get("related_symbols") or []) > 15:
+                    continue
+
+                age = _nasdaq_ago_hours(r.get("ago"))
+                pub_dt = None
+                try:
+                    pub_dt = datetime.strptime(str(r.get("created")).strip(), "%b %d, %Y")
+                except Exception:
+                    pub_dt = None
+                if age is None:
+                    age = ((now - pub_dt).total_seconds() / 3600) if pub_dt else 9999
+                if pub_dt is None:
+                    pub_dt = now - timedelta(hours=age) if age < 9999 else now
+
+                url = str(r.get("url") or "")
+                out.append({
+                    "title":     title,
+                    "publisher": str(r.get("publisher") or "Nasdaq"),
+                    "link":      ("https://www.nasdaq.com" + url) if url.startswith("/") else url,
+                    "date":      pub_dt.strftime("%Y-%m-%d %H:%M"),
+                    "age_hours": round(float(age), 1),
+                    "freshness": ("🔥 HOY" if age < 24 else
+                                  "⚡ Esta semana" if age < 168 else
+                                  "📅 Antigua"),
+                })
+            except Exception:
+                continue
+        out.sort(key=lambda x: x.get("age_hours", 9999))
+        return out[:max_items]
+    except Exception:
+        return []
+
+
 def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     """Noticias ordenadas por fecha descendente (más recientes primero)
     con campo 'age_hours' calculado para que los agentes sepan qué tan reciente es."""
@@ -1554,9 +1638,18 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     if cached:
         return cached
 
-    stock = _yt(ticker)
     result = []
     now = datetime.now()
+
+    # Toggle de PRUEBA (mismo que en el histórico): simula producción saltándose
+    # Yahoo para comprobar en local que el respaldo de Nasdaq entra bien.
+    import os as _os
+    if _os.environ.get("DLP_FORCE_TRADINGVIEW"):
+        result = _get_news_from_nasdaq(ticker, max_items)
+        _save_cache(key, result)
+        return result
+
+    stock = _yt(ticker)
 
     try:
         news = stock.news or []
@@ -1607,6 +1700,11 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
         result = result[:max_items]
     except Exception:
         pass
+
+    # Respaldo Nasdaq cuando yfinance no trae nada (típico en cloud/Render).
+    # Es puramente ADITIVO: solo entra si el resultado quedó vacío.
+    if not result:
+        result = _get_news_from_nasdaq(ticker, max_items)
 
     _save_cache(key, result)
     return result
