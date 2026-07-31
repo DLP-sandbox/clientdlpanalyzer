@@ -50,6 +50,7 @@ def build_score_breakdown(*a, **k):    return _charts().build_score_breakdown(*a
 def build_mini_gauge(*a, **k):         return _charts().build_mini_gauge(*a, **k)
 def build_rr_chart(*a, **k):           return _charts().build_rr_chart(*a, **k)
 def build_sector_heatmap(*a, **k):     return _charts().build_sector_heatmap(*a, **k)
+def build_sector_rotation(*a, **k):    return _charts().build_sector_rotation(*a, **k)
 def build_compact_gauge(*a, **k):      return _charts().build_compact_gauge(*a, **k)
 def build_rsi_gauge(*a, **k):          return _charts().build_rsi_gauge(*a, **k)
 def build_metric_bars(*a, **k):        return _charts().build_metric_bars(*a, **k)
@@ -2762,7 +2763,8 @@ def render_macro(analysis: StockAnalysis):
     if sector_perf:
         st.markdown('<div class="section-title-bar">Rotación Sectorial (1Y)</div>',
                     unsafe_allow_html=True)
-        fig = build_sector_heatmap(sector_perf)
+        # Misma estética que el inicio (barras con riel + columna de números).
+        fig = build_sector_rotation(sector_perf)
         _plotly(fig, use_container_width=True,
                         config={"displayModeBar": False, "staticPlot": True},
                         key=f"chart_macro_sector_heatmap_{analysis.ticker}")
@@ -4040,26 +4042,85 @@ def render_welcome():
                         st.session_state.selected_ticker = None
                     st.rerun()
 
-    # ── Live Market Pulse ─────────────────────────────────────────────
-    st.markdown('<div class="section-header">Live Market Pulse</div>', unsafe_allow_html=True)
+    # ── Live Market Pulse + Rotación Sectorial (bloque macro instantáneo) ──
+    # Sin cintas de carga: pinta desde el snapshot y refresca solo (fragmento).
+    _render_bloque_macro()
 
-    # Spinner mientras cargan los datos macro (~2-5s — el más lento)
-    macro_loader = st.empty()
-    macro_loader.markdown("""
-    <div class="section-spinner-wrap">
-        <div class="section-spinner"></div>
-        <div class="section-spinner-text">Cargando índices y sectores…</div>
-    </div>
-    """, unsafe_allow_html=True)
 
-    from data.market_data import get_macro_data
+def _bloque_macro_datos():
+    """(datos, actualizando) para el bloque macro del inicio. NUNCA lanza.
+
+    Máquina de estados en `session_state`:
+      · sin datos aún  → devuelve el SNAPSHOT y pide una segunda pasada.
+      · segunda pasada → hace la llamada real (los segundos de red ocurren aquí
+        dentro, no en el primer pintado), guarda el snapshot nuevo y termina.
+      · ya listo       → repinta desde memoria, sin red.
+    Si no hay snapshot (primera vez de todas), carga en vivo directamente: el
+    miembro espera como antes, pero nunca ve un hueco.
+
+    Memoria: el estado guarda UN dict macro pequeño (~2-3 KB) y el snapshot es
+    UN único fichero en .cache que se sobrescribe — nunca se acumula nada."""
+    estado = st.session_state.setdefault("_macro_estado", {"fase": "inicio"})
+
+    if estado["fase"] == "listo":
+        # El tick del fragmento no se desperdicia: pasados unos minutos se
+        # vuelve a refrescar, así el inicio se mantiene al día solo mientras
+        # alguien lo tenga abierto. `get_macro_data` tiene su propia caché de
+        # 1 h, así que estas re-comprobaciones casi siempre son gratis.
+        if (time.time() - float(estado.get("t", 0) or 0)) > 600:
+            estado["fase"] = "refrescando"
+        else:
+            return estado.get("datos") or {}, False
+
+    if estado["fase"] == "inicio":
+        try:
+            from data.market_data import get_macro_snapshot
+            snap = get_macro_snapshot()
+        except Exception:
+            snap = None
+        if snap:
+            # Hay último registro: se pinta ya y se refresca en la siguiente
+            # pasada del fragmento.
+            estado["fase"] = "refrescando"
+            estado["datos"] = snap
+            return snap, True
+        # Sin snapshot: no queda otra que cargar en vivo aquí mismo.
+        estado["fase"] = "refrescando"
+
+    # fase "refrescando": traer los datos reales
     try:
-        macro = get_macro_data()
+        from data.market_data import get_macro_data
+        frescos = get_macro_data() or {}
     except Exception:
-        macro = {}
+        frescos = {}
+    if frescos.get("sector_performance"):
+        try:
+            from data.market_data import save_macro_snapshot
+            # Sobrescribe el snapshot anterior: solo existe el más actualizado.
+            save_macro_snapshot(frescos)
+        except Exception:
+            pass
+        estado["datos"] = frescos
+    estado["fase"] = "listo"
+    estado["t"] = time.time()
+    return estado.get("datos") or {}, False
 
-    # Quitar el spinner — vamos a renderizar los datos reales abajo
-    macro_loader.empty()
+
+# `run_every` hace que el fragmento vuelva solo unos segundos después del
+# primer pintado: ahí es donde se hace la llamada real. Una vez en fase
+# "listo" los repintados son locales (sin red) y con datos idénticos, así que
+# no se ve movimiento en pantalla.
+@st.fragment(run_every=3)
+def _render_bloque_macro():
+    macro, actualizando = _bloque_macro_datos()
+
+    # Indicador DISCRETO de que se está refrescando — nunca una cinta que tape
+    # el contenido, que es justo lo que se quería quitar.
+    _punto = ('<span style="color:#5E6570;font-size:0.6rem;font-family:JetBrains Mono;'
+              'letter-spacing:0.08em;margin-left:10px;">actualizando…</span>'
+              if actualizando else "")
+    st.markdown(f'<div class="section-header">Live Market Pulse{_punto}</div>',
+                unsafe_allow_html=True)
 
     # (label, key del macro, formato del valor)
     pulse_items = [
@@ -4114,29 +4175,13 @@ def render_welcome():
             </div>
             """, unsafe_allow_html=True)
 
-    # ── Sector Performance ─────────────────────────────────────────────
+    # ── Sector Performance — sin cinta: los datos ya vienen resueltos ──
     sector_perf = macro.get("sector_performance", {}) if macro else {}
     if sector_perf:
         st.markdown('<div class="section-header">Rotación Sectorial (1Y)</div>', unsafe_allow_html=True)
-
-        # Spinner independiente mientras se construye el heatmap de Plotly
-        # (~200-500ms) — feedback visual consistente con las otras 2 secciones.
-        sector_loader = st.empty()
-        sector_loader.markdown("""
-        <div class="section-spinner-wrap">
-            <div class="section-spinner"></div>
-            <div class="section-spinner-text">Cargando rotación sectorial…</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        from dashboard.charts import build_sector_heatmap
-        fig = build_sector_heatmap(sector_perf)
-
-        # Quitar el spinner — vamos a renderizar el heatmap abajo
-        sector_loader.empty()
-
-        _plotly(fig, use_container_width=True, config={"displayModeBar": False},
-                        key="chart_welcome_sector_heatmap")
+        _plotly(build_sector_rotation(sector_perf), use_container_width=True,
+                config={"displayModeBar": False},
+                key="chart_welcome_sector_heatmap")
 
 
 # ── Main App ──────────────────────────────────────────────────────────────

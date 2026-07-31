@@ -1748,6 +1748,47 @@ def _get_macro_from_fred() -> dict:
         return {}
 
 
+# ── Snapshot macro: el último registro BUENO conocido ─────────────────────
+# Esta versión NO tiene base de datos externa: el snapshot vive en el MISMO
+# caché de disco de la app (.cache/macro_snapshot.json) — UN solo fichero que
+# se SOBRESCRIBE en cada guardado, así siempre existe solo la versión más
+# actualizada y jamás se acumulan gráficas viejas. Pesa ~2-3 KB: cero impacto
+# en el límite de memoria del servicio.
+
+def save_macro_snapshot(macro) -> None:
+    """Guarda el último registro macro. Nunca lanza.
+
+    Solo guarda si trae rotación sectorial real: así un fallo de red (que
+    devuelve el dict a medias o vacío) JAMÁS pisa el último dato bueno."""
+    try:
+        if not isinstance(macro, dict) or not macro.get("sector_performance"):
+            return
+        try:
+            from data.persistence import _make_json_safe
+            datos = _make_json_safe(macro)
+        except Exception:
+            datos = macro
+        # _save_cache escribe SIEMPRE el mismo fichero → el snapshot anterior
+        # queda reemplazado por el nuevo (nunca se acumula nada).
+        _save_cache("macro_snapshot", datos)
+    except Exception:
+        pass
+
+
+def get_macro_snapshot() -> Optional[dict]:
+    """Último registro macro conocido, o None. Nunca lanza.
+
+    Sin filtro de edad A PROPÓSITO: su valor es ser "lo último que se supo",
+    por viejo que sea (en cloud, con Yahoo bloqueado, es lo único que hay)."""
+    try:
+        datos = _load_cache("macro_snapshot", ttl_hours=24 * 365)
+        if isinstance(datos, dict) and datos.get("sector_performance"):
+            return datos
+    except Exception:
+        pass
+    return None
+
+
 def get_macro_data() -> dict:
     key = "macro_global"
     cached = _load_cache(key, ttl_hours=TTL_MACRO)
