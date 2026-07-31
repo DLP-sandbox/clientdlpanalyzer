@@ -4579,7 +4579,10 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::be
     width: 100% !important; height: 100% !important; min-height: 0 !important;
     margin: 0 !important; transform: none !important; cursor: pointer;
 }
-/* El tooltip del help NO debe crear caja visible dentro del overlay */
+/* Cinturón: TODA la cadena interior del overlay se estira al 100% (si un
+   wrapper intermedio no se estira, el botón solo cubre una franja y el clic
+   real del ratón cae al vacío en el resto de la tarjeta). */
+.stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stButton"] > div,
 .stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stTooltipHoverTarget"],
 .stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stTooltipIcon"],
 .stMain [data-testid="stElementContainer"][class*="st-key-qtilebtn_"] [data-testid="stTooltipIcon"] > div {

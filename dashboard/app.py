@@ -4175,8 +4175,13 @@ def render_welcome():
                     # «VER TODO» abre SIEMPRE el dashboard rápido INFORMATIVO
                     # (quick view) — nunca lanza ni abre un análisis: para eso
                     # están el buscador y el historial del sidebar.
-                    if st.button(f"◈ {ticker}", key=f"qtilebtn_{tk_safe}",
-                                 help=f"Ver dashboard rápido de {ticker}"):
+                    # SIN help=: el tooltip envuelve el botón en wrappers
+                    # (stTooltipHoverTarget) que NO se estiran → el botón solo
+                    # cubría una franja de ~38px arriba y el clic real del
+                    # ratón en el resto de la tarjeta (p. ej. «VER TODO») caía
+                    # al vacío. Sin tooltip la cadena es directa y el overlay
+                    # cubre la tarjeta ENTERA.
+                    if st.button(f"◈ {ticker}", key=f"qtilebtn_{tk_safe}"):
                         st.session_state.quick_view_ticker = ticker
                         st.session_state.selected_ticker = None
                         st.rerun()
