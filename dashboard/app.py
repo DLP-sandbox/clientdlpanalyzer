@@ -4171,15 +4171,14 @@ def render_welcome():
                         f'<div class="qt-foot">▾&nbsp;&nbsp;<span class="qt-foot-txt">VER TODO</span></div>',
                         unsafe_allow_html=True,
                     )
-                    # Overlay invisible: TODA la tarjeta es clicable
+                    # Overlay invisible: TODA la tarjeta es clicable.
+                    # «VER TODO» abre SIEMPRE el dashboard rápido INFORMATIVO
+                    # (quick view) — nunca lanza ni abre un análisis: para eso
+                    # están el buscador y el historial del sidebar.
                     if st.button(f"◈ {ticker}", key=f"qtilebtn_{tk_safe}",
                                  help=f"Ver dashboard rápido de {ticker}"):
-                        if ticker in st.session_state.analyses:
-                            st.session_state.selected_ticker = ticker
-                            st.session_state.quick_view_ticker = None
-                        else:
-                            st.session_state.quick_view_ticker = ticker
-                            st.session_state.selected_ticker = None
+                        st.session_state.quick_view_ticker = ticker
+                        st.session_state.selected_ticker = None
                         st.rerun()
 
     # ── Live Market Pulse + Rotación Sectorial (bloque macro instantáneo) ──
@@ -4373,7 +4372,10 @@ def main():
     qv = st.session_state.get("quick_view_ticker")
 
     # Prioridad: Quick View > Full Analysis > Scanner Config > Scan Results > Welcome
-    if qv and qv not in st.session_state.analyses:
+    # El quick view se muestra SIEMPRE que esté pedido — también para tickers
+    # ya analizados («VER TODO» es la vista informativa; el análisis completo
+    # se abre desde el buscador, el sidebar o el CTA del propio quick view).
+    if qv:
         render_quick_view(qv)
         return
 
