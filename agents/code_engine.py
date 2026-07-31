@@ -270,7 +270,11 @@ def score_fundamentals(info, financials, ratios):
             "fcf_yield": _pct(fcfy),
             "roic": _pct(roic),
             "debt_equity": _num(de, 2),
-            "pe_ratio": _num(pe, 1),
+            # El TRAILING real (no `pe`, que cae a forward si falta): el tile
+            # "P/E Trailing" usa este valor de respaldo y con el mixto pintaba
+            # trailing = forward (HMC). Sin trailing → "N/A" → el tile pone "—".
+            "pe_ratio": _num(info.get("pe_ratio"), 1),
+            "forward_pe": _num(info.get("forward_pe"), 1),
             "ev_ebitda": _num(ev, 1),
         },
         "sub_scores": sub_scores,

@@ -334,6 +334,11 @@ def get_company_info(ticker: str) -> dict:
 
     result = {
         "name":            info.get("longName", ticker),
+        # Divisas: la de cotización vs la de los estados financieros. En ADRs
+        # (HMC, TM, SONY…) difieren (USD vs JPY) y CUALQUIER ratio que mezcle
+        # estados con market cap/precio queda corrupto (FCF yield 591%…).
+        "trading_currency":   info.get("currency", ""),
+        "financial_currency": info.get("financialCurrency", ""),
         "sector":          info.get("sector", "Unknown"),
         "industry":        info.get("industry", "Unknown"),
         "country":         info.get("country", "US"),
@@ -759,13 +764,29 @@ def compute_quality_ratios(info: dict, financials: dict) -> dict:
     if safe(oi, 0) and invested_capital and invested_capital > 0:
         ratios["roic"] = safe(oi, 0) * (1 - 0.21) / invested_capital * 100
 
+    # ── Guardia de DIVISAS MIXTAS (ADRs: HMC, TM, SONY…) ──────────────────
+    # Los estados financieros llegan en su divisa local (JPY…) pero el market
+    # cap/precio en USD. Cualquier ratio que MEZCLE ambos queda corrupto
+    # (HMC: FCF yield "591%" → la valoración se iba a 100). Los ratios
+    # intra-estados (márgenes, ROIC, D/E, growth) son válidos en cualquier
+    # divisa y no se tocan.
+    _tc = str(info.get("trading_currency") or "").upper()
+    _fc = str(info.get("financial_currency") or "").upper()
+    _divisa_mixta = bool(_tc and _fc and _tc != _fc)
+
     # FCF Yield: preferir FCF TTM directo de YF
     fcf0 = safe(fcf, 0)
     fcf_yf = info.get("fcf_yf")
-    if fcf_yf and mktcap and mktcap > 0:
-        ratios["fcf_yield"] = float(fcf_yf) / mktcap * 100
-    elif fcf0 and mktcap and mktcap > 0:
-        ratios["fcf_yield"] = fcf0 / mktcap * 100
+    if not _divisa_mixta:
+        if fcf_yf and mktcap and mktcap > 0:
+            ratios["fcf_yield"] = float(fcf_yf) / mktcap * 100
+        elif fcf0 and mktcap and mktcap > 0:
+            ratios["fcf_yield"] = fcf0 / mktcap * 100
+        # Blindaje extra: un FCF yield fuera de ±30% es casi seguro un dato
+        # corrupto (divisa sin metadato, split raro…) — mejor sin dato que
+        # regalar el bono de valoración/salud con basura.
+        if not (-30 <= ratios.get("fcf_yield", 0) <= 30):
+            ratios.pop("fcf_yield", None)
 
     # Current ratio: preferir YF directo
     cr_yf = info.get("current_ratio_yf")
@@ -789,8 +810,9 @@ def compute_quality_ratios(info: dict, financials: dict) -> dict:
     if fcf0 and fcf1 and fcf1 != 0:
         ratios["fcf_growth_yoy"] = (fcf0 - fcf1) / abs(fcf1) * 100
 
-    # EV/Revenue
-    if mktcap and debt and cash and r0:
+    # EV/Revenue — también mezcla market cap (USD) con revenue de los estados
+    # (divisa local) → inválido en ADRs con divisa mixta.
+    if not _divisa_mixta and mktcap and debt and cash and r0:
         ev = mktcap + debt - cash
         ratios["ev_revenue"] = ev / r0 if r0 > 0 else None
 
@@ -2078,9 +2100,16 @@ def get_earnings_data(ticker: str) -> dict:
                 for idx, row in past.iterrows():
                     est = row.get("EPS Estimate")
                     act = row.get("Reported EPS")
+                    days_ago = (now - idx).days
+                    # Solo trimestres RECIENTES (~8 trimestres + margen). Para
+                    # algunos ADRs (HMC) Yahoo devuelve un calendario viejísimo
+                    # (2012-2014) → pintaba un 0/8 falso con datos de hace 12
+                    # años. Filtrado, la lista queda vacía y entra el fallback
+                    # de Nasdaq con el historial real.
+                    if days_ago > 800:
+                        continue
                     if pd.notna(est) and pd.notna(act) and est != 0:
                         surp = float((act - est) / abs(est) * 100)
-                        days_ago = (now - idx).days
                         surprises.append({
                             "date": str(idx.date()),
                             "days_ago": days_ago,
