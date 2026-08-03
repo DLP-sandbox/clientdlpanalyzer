@@ -3,8 +3,28 @@ services:
     name: dlp-market-analyzer
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python3 -m streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0
+    # Flags de MEMORIA/CPU (solo producción — en local se sigue arrancando sin
+    # ellos, así que el auto-reload al guardar ficheros se conserva):
+    #   · fileWatcherType=none → sin `watchdog` instalado, Streamlit vigila por
+    #     POLLING (stat() cada 200 ms sobre app.py 224 KB, styles.py 178 KB,
+    #     charts.py, market_data.py…) con un pool de 4 hilos. En un servidor no
+    #     sirve para nada: nadie edita ficheros en caliente.
+    #   · magicEnabled=false → evita el pase AST sobre app.py (224 KB) en cada
+    #     carga de script. Verificado inocuo: el fichero no tiene ni una
+    #     expresión suelta que "magic" convertiría en st.write().
+    startCommand: python3 -m streamlit run dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.fileWatcherType none --runner.magicEnabled false
     envVars:
+      # ── Memoria: fragmentación de glibc ────────────────────────────────
+      # El proceso tiene ~20 hilos vivos (pool de IO 8 + pool de agentes 6 +
+      # ScriptRunners de Streamlit + el hilo de cada análisis). glibc abre UNA
+      # ARENA DE MALLOC POR HILO y no se la devuelve al sistema operativo, lo
+      # que infla el RSS decenas de MB sin que haya objetos vivos.
+      # MALLOC_ARENA_MAX=2 acota las arenas; MALLOC_TRIM_THRESHOLD_ hace que
+      # libere antes. No cambia ni una línea de comportamiento de la app.
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: MALLOC_TRIM_THRESHOLD_
+        value: "131072"
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: SUPABASE_URL

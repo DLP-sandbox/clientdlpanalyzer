@@ -695,10 +695,22 @@ def _is_analyzable_stock(ticker: str) -> bool:
 
 
 # ── Run Analysis ──────────────────────────────────────────────────────────
+_DEBUG_LOG_PATH = "/tmp/dlp_debug.log"
+_DEBUG_LOG_MAX = 512 * 1024          # 512 KB
+
+
 def _debug_log(msg: str) -> None:
-    """Escribe a /tmp/dlp_debug.log con timestamp para depurar el flujo real."""
+    """Escribe a /tmp/dlp_debug.log con timestamp para depurar el flujo real.
+    Se TRUNCA al pasar de 512 KB (antes crecía sin límite durante toda la vida
+    del proceso, con tracebacks completos incluidos)."""
     try:
-        with open("/tmp/dlp_debug.log", "a") as f:
+        modo = "a"
+        try:
+            if os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX:
+                modo = "w"           # es un log de diagnóstico, no de auditoría
+        except OSError:
+            pass
+        with open(_DEBUG_LOG_PATH, modo) as f:
             f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}\n")
     except Exception:
         pass
@@ -4250,11 +4262,17 @@ def _bloque_macro_datos():
     return estado.get("datos") or {}, False
 
 
-# `run_every` hace que el fragmento vuelva solo unos segundos después del
-# primer pintado: ahí es donde se hace la llamada real. Una vez en fase
-# "listo" los repintados son locales (sin red) y con datos idénticos, así que
-# no se ve movimiento en pantalla.
-@st.fragment(run_every=3)
+# `run_every` hace que el fragmento vuelva solo: ahí es donde se hace la
+# llamada real, sin bloquear el primer pintado. Una vez en fase "listo" los
+# repintados son locales (sin red) y con datos idénticos, así que no se ve
+# movimiento en pantalla.
+# MEMORIA: a 3s eran ~1.200 repintados/hora por pestaña abierta, la sesión
+# nunca quedaba ociosa y el RSS subía en escalera. A 100s son ~36/hora (-97%)
+# sin cambiar nada más. El refresco real tarda 100s en llegar, pero
+# get_macro_data() tiene TTL de 1h: si la caché está caliente el refresco
+# devuelve lo mismo. Y el primer arranque sin snapshot NO depende del tick
+# (carga en vivo directa).
+@st.fragment(run_every=100)
 def _render_bloque_macro():
     macro, actualizando = _bloque_macro_datos()
 

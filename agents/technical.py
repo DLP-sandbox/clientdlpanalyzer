@@ -117,7 +117,10 @@ class TechnicalAgent(BaseAgent):
                     "rs":                rs,
                     "key_levels":        result.get("key_levels", {}),
                     "entry_setup":       result.get("entry_setup", ""),
-                    "df_daily":          df_daily.tail(252).to_dict() if not df_daily.empty else {},
+                    # NO se guarda el histórico de precios aquí: era el 68% del
+                    # peso de cada análisis (65 KB en JSON, 123 KB en RAM) y nadie
+                    # lo leía nunca — la gráfica de la sección Técnico pide datos
+                    # frescos con get_price_history() (dashboard/app.py).
                 },
             )
         except Exception as e:

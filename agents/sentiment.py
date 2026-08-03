@@ -2,7 +2,11 @@
 Agente de Sentimiento & Datos Alternativos — analiza el sentimiento
 de noticias, narrativa del mercado y señales de datos alternativos.
 """
-import anthropic
+# `anthropic` solo se necesita como anotación de tipo (ver agents/base.py):
+# se importa para el IDE/mypy, nunca en runtime. Ahorra ~16 MB de RAM.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import anthropic
 
 from agents.base import BaseAgent, AgentReport
 from data.market_data import get_news, get_company_info, get_company_info

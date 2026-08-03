@@ -6,9 +6,16 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
-import anthropic
+# `anthropic` pesa ~16 MB en el grafo de imports y esta versión NO usa IA
+# (dashboard/app.py::get_client() devuelve None; el scoring lo hace
+# agents/code_engine.py). Solo se necesitaba como ANOTACIÓN DE TIPO, así que
+# se importa únicamente para el IDE/mypy: en runtime nunca se carga.
+# Reactivar la IA no requiere tocar nada aquí — basta con que get_client()
+# devuelva un cliente real (_call_claude usa duck typing).
+if TYPE_CHECKING:
+    import anthropic
 
 from config.settings import SUBAGENT_MODEL, MAX_TOKENS_AGENT
 
@@ -203,7 +210,7 @@ class BaseAgent:
     name: str = "BaseAgent"
     model: str = SUBAGENT_MODEL
 
-    def __init__(self, client: anthropic.Anthropic):
+    def __init__(self, client: "anthropic.Anthropic"):
         self.client = client
 
     def analyze(self, ticker: str, data: dict) -> AgentReport:

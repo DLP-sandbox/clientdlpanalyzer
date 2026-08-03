@@ -150,9 +150,13 @@ def _make_json_safe(obj):
     return str(obj)
 
 
-def _safe_json_dumps(data) -> str:
-    """Serializa a JSON sanitizando claves no-string primero."""
-    safe = _make_json_safe(data)
+def _safe_json_dumps(data, ya_saneado: bool = False) -> str:
+    """Serializa a JSON sanitizando claves no-string primero.
+
+    `ya_saneado=True` evita una COPIA PROFUNDA redundante cuando el llamante ya
+    pasó el dict por _make_json_safe (antes se hacían 3 copias simultáneas del
+    análisis completo en cada guardado)."""
+    safe = data if ya_saneado else _make_json_safe(data)
     return json.dumps(safe, indent=2, ensure_ascii=False)
 
 
@@ -161,7 +165,15 @@ def _log_persistence_error(context: str, exc: Exception) -> None:
     try:
         _ensure_dirs()
         log_path = HISTORY_DIR / "persistence_errors.log"
-        with log_path.open("a") as f:
+        # Truncar al pasar de 256 KB: antes crecía sin límite mientras viviera
+        # el proceso. Es un log de diagnóstico, no de auditoría.
+        modo = "a"
+        try:
+            if log_path.stat().st_size > 256 * 1024:
+                modo = "w"
+        except OSError:
+            pass
+        with log_path.open(modo) as f:
             f.write(f"{datetime.now().isoformat()} [{context}] {type(exc).__name__}: {exc}\n")
     except Exception:
         pass
@@ -192,7 +204,7 @@ def save_analysis(analysis) -> None:
     try:
         _ensure_dirs()
         path = ANALYSES_DIR / f"{ticker}.json"
-        path.write_text(_safe_json_dumps(safe_dict))
+        path.write_text(_safe_json_dumps(safe_dict, ya_saneado=True))
     except Exception as e:
         _log_persistence_error(f"save_analysis:{ticker}", e)
 
@@ -289,6 +301,24 @@ def load_all_analyses() -> dict:
     return result
 
 
+# Claves que versiones anteriores guardaban dentro de los reportes y que NINGUNA
+# pantalla lee. Se descartan AL CARGAR para que un análisis antiguo no las
+# re-materialice en memoria en cada sesión nueva.
+#   · df_daily → volcado del histórico de precios: ~123 KB en RAM por análisis.
+_CLAVES_MUERTAS = ("df_daily",)
+
+
+def _sin_datos_muertos(raw) -> dict:
+    """Copia del raw_data sin las claves muertas. NUNCA lanza."""
+    try:
+        d = dict(raw or {})
+        for k in _CLAVES_MUERTAS:
+            d.pop(k, None)
+        return d
+    except Exception:
+        return {}
+
+
 def stock_analysis_from_dict(d: dict):
     """Reconstruye un StockAnalysis (con sus AgentReports) desde dict."""
     from agents.base import AgentReport
@@ -308,7 +338,7 @@ def stock_analysis_from_dict(d: dict):
                 key_metrics=dict(v.get("key_metrics") or {}),
                 conviction=v.get("conviction", "MEDIUM"),
                 sub_scores=dict(v.get("sub_scores") or {}),
-                raw_data=dict(v.get("raw_data") or {}),
+                raw_data=_sin_datos_muertos(v.get("raw_data")),
                 error=v.get("error"),
             )
         except Exception:
@@ -406,7 +436,7 @@ def save_scan(scan_results) -> Optional[str]:
 
         # 2. Local file backup
         _ensure_dirs()
-        (SCANS_DIR / f"scan_{scan_id}.json").write_text(_safe_json_dumps(safe_data))
+        (SCANS_DIR / f"scan_{scan_id}.json").write_text(_safe_json_dumps(safe_data, ya_saneado=True))
         return scan_id
     except Exception as e:
         _log_persistence_error("save_scan", e)

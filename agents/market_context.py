@@ -13,7 +13,11 @@ contexto temporal y la Guía de Redacción Club DLP (igual que el resto de
 agentes). Por eso el max_tokens es generoso (4500): genera 3 secciones con el
 estilo DLP (términos explicados inline → texto más largo) y NO debe truncarse.
 """
-import anthropic
+# `anthropic` solo se necesita como anotación de tipo (ver agents/base.py):
+# se importa para el IDE/mypy, nunca en runtime. Ahorra ~16 MB de RAM.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import anthropic
 
 from agents.base import BaseAgent, AgentReport
 from data.market_data import (

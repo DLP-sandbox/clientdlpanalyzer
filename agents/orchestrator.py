@@ -8,9 +8,16 @@ import threading as _threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-import anthropic
+# `anthropic` pesa ~16 MB en el grafo de imports y esta versión NO usa IA
+# (dashboard/app.py::get_client() devuelve None; el scoring lo hace
+# agents/code_engine.py). Solo se necesitaba como ANOTACIÓN DE TIPO, así que
+# se importa únicamente para el IDE/mypy: en runtime nunca se carga.
+# Reactivar la IA no requiere tocar nada aquí — basta con que get_client()
+# devuelva un cliente real (_call_claude usa duck typing).
+if TYPE_CHECKING:
+    import anthropic
 
 from config.settings import ORCHESTRATOR_MODEL, MAX_TOKENS_ORCHESTRATOR, WEIGHTS, THRESHOLDS
 
@@ -167,7 +174,7 @@ class StockAnalysis:
 class Orchestrator:
     """El Director del hedge fund: coordina todos los agentes y genera la decisión final."""
 
-    def __init__(self, anthropic_client: anthropic.Anthropic):
+    def __init__(self, anthropic_client: "anthropic.Anthropic"):
         self.client = anthropic_client
         # NOTA: market_context es un agente COMBINADO que hace 1 sola llamada a
         # la IA pero devuelve 3 reportes ("macro", "sentiment", "catalysts") con
