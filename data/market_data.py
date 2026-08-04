@@ -314,6 +314,11 @@ def get_company_info(ticker: str) -> dict:
         live = get_live_price(ticker)
         if live:
             cached["current_price"] = live
+        # Auto-curación: los cachés escritos antes de esta versión no traen el
+        # dividendo. Se resuelve aquí SIN RED (con los campos que ya tiene) para
+        # que el tile no salga vacío durante las 4 h de TTL.
+        if "dividend_rate" not in cached:
+            _resolver_dividendo(cached, permitir_red=False)
         return cached
 
     try:
@@ -526,6 +531,9 @@ def get_company_info(ticker: str) -> dict:
     # Red secundaria: descartar lo que siga siendo imposible tras el merge.
     _sanear_ratios(result)
 
+    # Dividendo anual en $/acción (informativo, no entra en ningún score).
+    _resolver_dividendo(result, tv=tv, info_yf=info)
+
     # Short interest: si yfinance no lo trajo (None en cloud), completar con
     # Nasdaq (solo cubre valores del NASDAQ) y, si tampoco, con FINRA, que
     # incluye TODAS las acciones de EE.UU. — es lo que rescata a las del NYSE
@@ -712,6 +720,135 @@ def _sanear_ratios(result: dict) -> None:
         pass
 
 
+def _dividendo_plausible(rate, price) -> bool:
+    """¿Es creíble un dividendo anual de `rate` para una acción a `price`?
+
+    Se valida por el YIELD IMPLÍCITO, reutilizando el rango que ya existe para
+    dividend_yield (0-40 %). Un dividendo en dólares no tiene rango absoluto
+    válido ($0.02 y $60 son ambos reales), pero un yield del 50 % no lo es.
+    Esto atrapa automáticamente las cifras en moneda local: los 95,0 YENES de
+    `trailingAnnualDividendRate` de TM darían un yield del 50,5 % → rechazado.
+    NUNCA lanza."""
+    try:
+        if not _es_num(rate) or float(rate) <= 0:
+            return False
+        if _es_num(price) and float(price) > 0:
+            return _ratio_plausible("dividend_yield", float(rate) / float(price) * 100.0)
+        return 0 < float(rate) < 1000        # sin precio: solo descarta lo absurdo
+    except Exception:
+        return False
+
+
+def _resolver_dividendo(result: dict, tv=None, info_yf=None,
+                        permitir_red: bool = True) -> None:
+    """Resuelve el DIVIDENDO ANUAL EN $/ACCIÓN y su veredicto. NUNCA lanza.
+
+    Escribe tres claves nuevas y no toca ninguna existente:
+      · dividend_rate   float|None — dólares por acción al año
+      · dividend_status "paga" | "no_paga" | "desconocido"
+      · dividend_fuente de dónde salió (diagnóstico)
+
+    Es un dato PURAMENTE INFORMATIVO: no entra en ningún score.
+
+    Cadena (se detiene en la primera que valida):
+      1. dividendRate de yfinance — exacto.
+      2. dividendYield × precio / 100, leído del info CRUDO de yfinance (donde
+         la escala es inequívocamente %). Precisión medida ±5 %.
+      3. dividend_rate derivado en el fallback de TradingView (yield × close).
+    """
+    try:
+        info_yf = info_yf or {}
+        tv = tv or {}
+        precio = result.get("current_price")
+        rate = None
+        fuente = ""
+
+        # ── 1. El campo oficial anualizado ───────────────────────────────
+        v = info_yf.get("dividendRate")
+        if _dividendo_plausible(v, precio):
+            rate, fuente = float(v), "yfinance:dividendRate"
+
+        # ── 2. Derivado del yield crudo de yfinance (escala % conocida) ──
+        if rate is None:
+            y = info_yf.get("dividendYield")
+            if _es_num(y) and float(y) > 0 and _es_num(precio) and float(precio) > 0:
+                cand = float(y) * float(precio) / 100.0
+                if _dividendo_plausible(cand, precio):
+                    rate, fuente = cand, "yfinance:yield×precio"
+
+        # ── 3. Derivado en TradingView (ya calculado en su fallback) ─────
+        if rate is None:
+            v = tv.get("dividend_rate") or result.get("dividend_rate")
+            if _dividendo_plausible(v, precio):
+                rate, fuente = float(v), "tradingview:yield×close"
+
+        # ── 4. Último recurso: el yield ya consolidado en result ─────────
+        if rate is None:
+            y = result.get("dividend_yield")
+            if _es_num(y) and float(y) > 0 and _es_num(precio) and float(precio) > 0:
+                cand = float(y) * float(precio) / 100.0
+                if _dividendo_plausible(cand, precio):
+                    rate, fuente = cand, "result:yield×precio"
+
+        if rate is not None:
+            result["dividend_rate"] = round(rate, 4)
+            result["dividend_status"] = "paga"
+            result["dividend_fuente"] = fuente
+            return
+
+        # ── Sin cifra: ¿es que NO PAGA, o que no lo sabemos? ─────────────
+        # Solo se puede afirmar "no paga" si la consulta FUNCIONÓ.
+        # OJO: `result["name"]` NO vale como evidencia — para un ticker que no
+        # existe, `name` cae al propio ticker ("ZZZZ") y se afirmaría en falso
+        # que no paga dividendo. La evidencia es que ALGUNA fuente respondiera
+        # de verdad, y que el valor tenga precio (una acción real cotiza).
+        hubo_evidencia = (bool(info_yf) or bool(tv)) and _es_num(precio) and float(precio or 0) > 0
+        if not hubo_evidencia:
+            result["dividend_rate"] = None
+            result["dividend_status"] = "desconocido"
+            result["dividend_fuente"] = "sin_evidencia"
+            return
+
+        def _cero_o_ausente(x):
+            return x is None or (_es_num(x) and float(x) == 0)
+
+        campos_cero = all(_cero_o_ausente(info_yf.get(k)) for k in (
+            "dividendRate", "dividendYield", "trailingAnnualDividendRate",
+            "lastDividendValue"))
+        # payoutRatio > 0 es evidencia de que SÍ paga → bloquea el "No".
+        _pr = info_yf.get("payoutRatio")
+        paga_algo = _es_num(_pr) and float(_pr) > 0
+        # Un ex-dividendo ANTIGUO no prueba nada: AMD tiene uno de 1995 y no paga.
+        ex_reciente = False
+        try:
+            from datetime import datetime, timedelta
+            _ex = result.get("ex_dividend_date") or ""
+            if _ex:
+                _d = datetime.strptime(str(_ex)[:10], "%Y-%m-%d")
+                ex_reciente = _d > (datetime.now() - timedelta(days=548))   # 18 meses
+        except Exception:
+            ex_reciente = False
+        tv_cero = (not tv) or _cero_o_ausente(tv.get("dividend_yield"))
+
+        if campos_cero and not paga_algo and not ex_reciente and tv_cero:
+            result["dividend_rate"] = 0.0
+            result["dividend_status"] = "no_paga"
+            result["dividend_fuente"] = "confirmado_sin_dividendo"
+        else:
+            result["dividend_rate"] = None
+            result["dividend_status"] = "desconocido"
+            result["dividend_fuente"] = "sin_cifra_utilizable"
+    except Exception:
+        # Blindaje: un fallo aquí NO puede tumbar get_company_info, de la que
+        # dependen los 8 agentes.
+        try:
+            result.setdefault("dividend_rate", None)
+            result.setdefault("dividend_status", "desconocido")
+            result.setdefault("dividend_fuente", "error")
+        except Exception:
+            pass
+
+
 def _get_company_info_from_tradingview(ticker: str) -> dict:
     """Fallback de fundamentales via TradingView para los campos críticos que
     se pierden cuando yfinance.info está rate-limitado (Render, Streamlit
@@ -793,8 +930,18 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             # publica, así que se usa como respaldo (ya viene en %).
             "roic_tv":        _f("return_on_invested_capital_fq"),
             "trading_currency": str(row.get("currency", "") or "") or None,
+            # dividend_yield viaja en PORCENTAJE en toda la app (yfinance da
+            # 0.78 para un 0.78%). TradingView también lo da en % (MSFT 0.73,
+            # KO 2.39), así que se pasa TAL CUAL. Antes se dividía entre 100 y
+            # el mismo campo acababa con DOS escalas según qué fuente ganara:
+            # por eso la vista rápida mostraba "242.00%" para KO en local.
+            "dividend_yield": _f("dividend_yield_recent"),
+            # Dividendo anual en $/acción derivado del yield y el cierre: TV ya
+            # trae ambos campos, así que NO hace falta tocar el .select() (una
+            # columna que no exista mataría TODO el fallback).
+            "dividend_rate":  ((_f("dividend_yield_recent") or 0) * (_f("close") or 0) / 100.0
+                               if (_f("dividend_yield_recent") and _f("close")) else None),
             # Margins: TV→decimal para compatibilidad con yfinance
-            "dividend_yield": _pct_to_dec("dividend_yield_recent"),
             "revenue_ttm":    _f("total_revenue_ttm"),
             "profit_margin":  _pct_to_dec("net_margin"),
             "operating_margin_yf": _pct_to_dec("operating_margin"),

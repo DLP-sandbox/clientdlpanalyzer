@@ -2246,20 +2246,45 @@ def render_fundamentals(analysis: StockAnalysis):
                   else "#E2B25C" if isinstance(beta_raw, (int, float)) and beta_raw <= 1.5
                   else "#F1495F")
 
-    _render_metric_tiles([
-        {"icon": "💎", "label": "Market Cap",
-         "value": mktcap_str, "color": "#E2B25C",
-         "tooltip": "Capitalización de mercado total (precio × acciones en circulación)."},
-        {"icon": "📊", "label": "Profit Margin",
-         "value": pm_str, "color": pm_color,
-         "tooltip": "Margen neto (Profit Margin). % de cada dólar de ingresos que queda como ganancia neta."},
-        {"icon": "💰", "label": "Revenue TTM",
-         "value": rev_ttm_str, "color": "#6FA3E0",
-         "tooltip": "Ingresos totales de los últimos 12 meses (Trailing Twelve Months)."},
-        {"icon": "📈", "label": "Beta",
-         "value": beta_str, "color": beta_color,
-         "tooltip": "Beta vs S&P 500. <1 = menos volátil que el índice, >1 = más volátil, 1 = correlación perfecta."},
-    ])
+    # Dividendo anual en $/acción — SOLO INFORMATIVO (no entra en ningún score).
+    # Tres estados resueltos en la capa de datos: paga / no_paga / desconocido.
+    _div_rate = info.get("dividend_rate")
+    _div_status = info.get("dividend_status")
+    _div_fuente = info.get("dividend_fuente") or ""
+    if _div_status == "paga" and isinstance(_div_rate, (int, float)) and _div_rate > 0:
+        div_str = f"${_div_rate:,.2f}"
+        div_color = "#3DD68C"
+    elif _div_status == "no_paga":
+        div_str, div_color = "No", "#5E6570"
+    else:
+        div_str, div_color = "—", "#5E6570"
+    div_tip = ("Dividendo anual en dólares por acción. Es solo informativo: "
+               "NO entra en ningún score ni en el análisis.")
+    if _div_status == "paga" and "yield" in _div_fuente:
+        div_tip += " Estimado a partir del yield y el precio actual (±5%)."
+    elif _div_status == "no_paga":
+        div_tip += " Verificado en todas las fuentes: esta empresa no reparte dividendo."
+
+    # Container keyed: esta fila tiene 5 tiles (una más que el resto) y en
+    # pantallas intermedias (~900px, con el sidebar abierto) las columnas se
+    # quedaban en 74px. El CSS scoped la reordena en 3+2 solo en ese tramo.
+    with st.container(key="tiles_mercado"):
+        _render_metric_tiles([
+            {"icon": "💎", "label": "Market Cap",
+             "value": mktcap_str, "color": "#E2B25C",
+             "tooltip": "Capitalización de mercado total (precio × acciones en circulación)."},
+            {"icon": "📊", "label": "Profit Margin",
+             "value": pm_str, "color": pm_color,
+             "tooltip": "Margen neto (Profit Margin). % de cada dólar de ingresos que queda como ganancia neta."},
+            {"icon": "💰", "label": "Revenue TTM",
+             "value": rev_ttm_str, "color": "#6FA3E0",
+             "tooltip": "Ingresos totales de los últimos 12 meses (Trailing Twelve Months)."},
+            {"icon": "📈", "label": "Beta",
+             "value": beta_str, "color": beta_color,
+             "tooltip": "Beta vs S&P 500. <1 = menos volátil que el índice, >1 = más volátil, 1 = correlación perfecta."},
+            {"icon": "💵", "label": "Dividendo",
+             "value": div_str, "color": div_color, "tooltip": div_tip},
+        ])
 
     # ── Desglose de sub-scores ───────────────────────────────────
     st.markdown('<div class="section-title-bar">Pilares Fundamentales</div>',
@@ -3946,7 +3971,9 @@ def render_quick_view(ticker: str):
         beta = info.get("beta")
         beta_str = f"{beta:.2f}" if isinstance(beta, (int, float)) else "—"
 
-        div_yield = (info.get("dividend_yield") or 0) * 100
+        # dividend_yield YA viene en porcentaje (MSFT 0.78 = 0.78%). El ×100
+        # que había aquí mostraba "242.00%" para KO y "509.00%" para O.
+        div_yield = info.get("dividend_yield") or 0
         div_str = f"{div_yield:.2f}%" if div_yield > 0 else "—"
 
         metrics = [

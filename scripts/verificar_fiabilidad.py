@@ -45,7 +45,8 @@ CAMPOS_INFO = [
     "profit_margin", "gross_margin_yf", "operating_margin_yf",
     "roe_yf", "roa_yf", "debt_equity_yf", "current_ratio_yf",
     "revenue_ttm", "ebitda_yf", "fcf_yf", "book_value_yf",
-    "dividend_yield", "beta", "short_percent", "short_ratio",
+    "dividend_yield", "dividend_rate", "dividend_status", "dividend_fuente",
+    "beta", "short_percent", "short_ratio",
 ]
 
 CAMPOS_HOLDERS = [

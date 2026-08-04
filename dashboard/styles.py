@@ -4589,6 +4589,24 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::be
     width: 100% !important; height: 100% !important;
 }
 
+/* ── Fila "Datos de Mercado": 5 tiles (uno más que el resto) ───────────
+   En pantallas intermedias (sidebar abierto + ventana ~900px) cinco
+   columnas dejaban 74px por tile y el Market Cap se cortaba. Aquí, y SOLO
+   aquí, se reordena en 3+2. Scoped al container keyed: ninguna otra fila
+   de tiles se ve afectada. */
+@media (min-width: 641px) and (max-width: 1000px) {
+    .stMain .st-key-tiles_mercado [data-testid="stHorizontalBlock"] {
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 8px !important;
+    }
+    .stMain .st-key-tiles_mercado [data-testid="stHorizontalBlock"] [data-testid="stColumn"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: none !important;
+    }
+}
+
 </style>
 """
 
