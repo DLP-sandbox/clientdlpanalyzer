@@ -396,3 +396,121 @@ def describe_business(industry, sector=None) -> str:
         return ""
     except Exception:
         return ""
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TIPO DE NEGOCIO Y MÉTRICAS QUE NO APLICAN
+# ══════════════════════════════════════════════════════════════════════════
+# No todas las métricas tienen sentido en todos los negocios. Un banco NO
+# reporta coste de ventas (su margen bruto llega como 0.0), ni EBITDA, ni
+# ratio corriente comparable: la deuda es su materia prima, no un pasivo
+# operativo. Sin esto, la app pintaba "0.0%" en ROJO y restaba puntos reales
+# a JPM, UNTY, CIB… por un dato que esas empresas simplemente no publican.
+
+_TIPOS_NEGOCIO = {
+    "banco": (
+        "bank", "banks", "banks - regional", "banks - diversified",
+        "banks—regional", "banks—diversified", "regional banks",
+        "major banks", "savings institutions", "savings & cooperative banks",
+        "banks diversified", "banks regional",
+    ),
+    "aseguradora": (
+        "insurance", "life insurance", "insurance - life",
+        "insurance - property & casualty", "property & casualty insurance",
+        "insurance brokers", "insurance - brokers", "multi-line insurance",
+        "insurance - diversified", "insurance - reinsurance", "reinsurance",
+    ),
+    "reit": (
+        "reit", "real estate investment trusts", "reit - diversified",
+        "reit - residential", "reit - retail", "reit - office",
+        "reit - industrial", "reit - healthcare facilities",
+        "reit - hotel & motel", "reit - mortgage", "reit - specialty",
+    ),
+}
+
+# Métricas que NO son significativas en cada tipo de negocio.
+_NO_APLICAN = {
+    "banco": frozenset({"gross_margin", "ev_ebitda", "ebitda",
+                        "current_ratio", "quick_ratio", "fcf_yield",
+                        "ev_revenue"}),
+    "aseguradora": frozenset({"gross_margin", "ev_ebitda", "ebitda",
+                              "current_ratio", "quick_ratio"}),
+    "reit": frozenset({"gross_margin", "current_ratio"}),
+    "general": frozenset(),
+}
+
+_MOTIVOS = {
+    "banco": {
+        "gross_margin": "Los bancos no reportan coste de ventas, así que el "
+                        "margen bruto no es una métrica significativa en este negocio.",
+        "ev_ebitda":    "Los bancos no publican EBITDA: para ellos la deuda es "
+                        "materia prima, no un pasivo operativo.",
+        "ebitda":       "Los bancos no publican EBITDA: para ellos la deuda es "
+                        "materia prima, no un pasivo operativo.",
+        "current_ratio": "El ratio corriente no aplica a un banco: sus activos y "
+                         "pasivos no se clasifican como en una empresa operativa.",
+        "quick_ratio":  "El ratio de liquidez inmediata no aplica a un banco.",
+        "fcf_yield":    "El flujo de caja libre de un banco no es comparable con "
+                        "el de una empresa operativa.",
+        "ev_revenue":   "El enterprise value no es una medida útil en un banco.",
+    },
+    "aseguradora": {
+        "gross_margin": "Las aseguradoras no reportan coste de ventas: su "
+                        "equivalente es el ratio combinado.",
+        "ev_ebitda":    "Las aseguradoras no publican EBITDA de forma comparable.",
+        "ebitda":       "Las aseguradoras no publican EBITDA de forma comparable.",
+        "current_ratio": "El ratio corriente no aplica al balance de una aseguradora.",
+        "quick_ratio":  "El ratio de liquidez inmediata no aplica a una aseguradora.",
+    },
+    "reit": {
+        "gross_margin": "En un REIT el margen bruto no es significativo: la "
+                        "métrica del sector son los fondos de operaciones (FFO).",
+        "current_ratio": "El ratio corriente no es relevante en un REIT.",
+    },
+}
+
+
+def tipo_negocio(sector, industry) -> str:
+    """'banco' | 'aseguradora' | 'reit' | 'general'. NUNCA lanza.
+
+    Manda la INDUSTRIA (más precisa); el sector solo confirma. Conservador a
+    propósito: una gestora de activos como CNS NO se clasifica como banco."""
+    try:
+        ind = _norm(industry) if not _es_vacio(industry) else ""
+        if ind:
+            for tipo, claves in _TIPOS_NEGOCIO.items():
+                for clave in claves:
+                    # Coincidencia por palabra o por prefijo de la industria,
+                    # nunca por subcadena suelta (evita falsos positivos).
+                    if ind == clave or ind.startswith(clave + " ") or \
+                       ind.startswith(clave + "-") or clave in ind.split(" - "):
+                        return tipo
+            # Red de seguridad para etiquetas compuestas frecuentes
+            if ind.startswith("bank"):
+                return "banco"
+            if ind.startswith("insurance") or ind.endswith("insurance"):
+                return "aseguradora"
+            if ind.startswith("reit"):
+                return "reit"
+        sec = _norm(sector) if not _es_vacio(sector) else ""
+        if sec == "real estate" and ind.startswith("reit"):
+            return "reit"
+        return "general"
+    except Exception:
+        return "general"
+
+
+def metricas_no_aplicables(sector, industry) -> frozenset:
+    """Métricas sin sentido para este negocio. NUNCA lanza."""
+    try:
+        return _NO_APLICAN.get(tipo_negocio(sector, industry), frozenset())
+    except Exception:
+        return frozenset()
+
+
+def motivo_no_aplica(metrica, tipo) -> str:
+    """Explicación en lenguaje natural, lista para el tooltip. NUNCA lanza."""
+    try:
+        return _MOTIVOS.get(tipo, {}).get(metrica, "")
+    except Exception:
+        return ""

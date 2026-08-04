@@ -83,6 +83,26 @@ def score_fundamentals(info, financials, ratios):
     pe = info.get("pe_ratio") or info.get("forward_pe")
     ev = info.get("ev_ebitda")
 
+    # ── Métricas que NO APLICAN a este tipo de negocio ───────────────────
+    # Un banco no reporta coste de ventas: su margen bruto llega como 0.0 y
+    # antes puntuaba 0 de 5 en Calidad — castigo real por un dato que esa
+    # empresa no publica (afectaba a JPM, UNTY, CIB, BSAC, SAN…). Se convierte
+    # en None para que _lin() use su default NEUTRO. Un valor REAL nunca se
+    # descarta: solo huecos y ceros exactos.
+    try:
+        from data.industry_labels import metricas_no_aplicables
+        _na = metricas_no_aplicables(info.get("sector"), info.get("industry"))
+    except Exception:
+        _na = frozenset()
+
+    def _na_neutro(nombre, v):
+        return None if (nombre in _na and (v is None or v == 0)) else v
+
+    gm   = _na_neutro("gross_margin", gm)
+    cr   = _na_neutro("current_ratio", cr)
+    fcfy = _na_neutro("fcf_yield", fcfy)
+    ev   = _na_neutro("ev_ebitda", ev)
+
     # Calidad (0-25): márgenes + retorno sobre capital
     quality = 0.0
     quality += _lin(om, 0, 32, 2, 13, default=6)
@@ -828,12 +848,53 @@ def score_future(info, news, ratios, competitive_ctx=None, peer_metrics=None):
 # ════════════════════════════════════════════════════════════════════════
 # 4. SMART MONEY / INSTITUCIONAL
 # ════════════════════════════════════════════════════════════════════════
+def _key_insight_institucional(conocido, exento, buys, sells, inst_pct,
+                               short_known, short_pct):
+    """Construye el "lo más relevante" COMPONIENDO solo lo que sabemos.
+
+    La versión anterior afirmaba literalmente "sin compras de directivos que
+    confirmen convicción interna" incluso cuando el dato NO EXISTÍA (ADRs de
+    emisores extranjeros): presentaba una laguna como un hecho negativo."""
+    piezas = []
+    if conocido and buys >= 2:
+        piezas.append(f"los directivos están comprando ({buys} compras recientes), "
+                      f"la señal interna más valiosa")
+    if inst_pct is not None:
+        piezas.append(f"respaldo institucional del {_pct(inst_pct, 0)}")
+    if not conocido:
+        if exento:
+            piezas.append("las operaciones de directivos no son públicas en este valor "
+                          "(emisor extranjero exento ante la SEC), así que la lectura se "
+                          "apoya en los fondos y en las posiciones en corto")
+        else:
+            piezas.append("el registro de operaciones de directivos no está disponible "
+                          "ahora mismo")
+    elif buys == 0 and sells >= 1:
+        # Solo se puede afirmar cuando el dato EXISTE.
+        piezas.append("sin compras de directivos que confirmen convicción interna")
+    if short_known:
+        piezas.append(f"pocos apuestan en contra (short interest {_pct(short_pct, 0)})")
+    if not piezas:
+        return "Lo más relevante: no hay datos suficientes de dinero institucional para este valor."
+    return "Lo más relevante: " + "; ".join(piezas) + "."
+
+
 def score_institutional(holders, info):
     inst_pct = holders.get("institutional_ownership_pct")
     if isinstance(inst_pct, (int, float)) and inst_pct <= 1.5:
         inst_pct = inst_pct * 100  # viene como fracción
-    insider_buys = holders.get("recent_insider_buys", 0) or 0
-    insider_sells = holders.get("recent_insider_sells", 0) or 0
+    # ── ¿SABEMOS algo de los insiders? ───────────────────────────────────
+    # Los emisores extranjeros con ADR están EXENTOS de declarar a la SEC
+    # (Rule 3a12-3(b)): el dato NO existe. Antes se colapsaba a 0, que es una
+    # AFIRMACIÓN ("no compraron") y penalizaba igual que unas ventas reales.
+    _ins_disp = holders.get("insiders_disponibles")
+    # Compatibilidad con holders guardados por versiones anteriores (sin la marca):
+    insider_conocido = (_ins_disp is True) or (
+        _ins_disp is None and bool(holders.get("insider_transactions")))
+    insider_exento = (_ins_disp is False) or (
+        holders.get("insiders_motivo") == "emisor_extranjero")
+    insider_buys = holders.get("recent_insider_buys") or 0
+    insider_sells = holders.get("recent_insider_sells") or 0
     insiders_held = holders.get("insiders_percent_held")
     inst_count = holders.get("institutions_count")
     # short_percent puede ser None (sin dato, típico en cloud) → lo tratamos
@@ -842,8 +903,15 @@ def score_institutional(holders, info):
     short_pct = (info.get("short_percent") or 0) * 100
 
     # Insider signal (0-33)
-    insider = 18.0 + _lin(insider_buys, 0, 5, 0, 14)
-    insider = _clamp(insider, 10, 33)
+    if not insider_conocido:
+        # Neutro HONESTO al 65% del tramo, coherente con los otros dos neutros
+        # de este bloque (institucional 19/33 = 58%, short 22/34 = 65%). Antes
+        # la ausencia daba 18/33 fijo: lo mismo que unos directivos que solo
+        # venden. Un ADR no podía alcanzar convicción ALTA por algo que la ley
+        # le impide publicar.
+        insider = 21.5
+    else:
+        insider = _clamp(18.0 + _lin(insider_buys, 0, 5, 0, 14), 10, 33)
 
     # Institutional quality (0-33): ownership saludable 40-85%
     if inst_pct is None:
@@ -868,12 +936,16 @@ def score_institutional(holders, info):
     shortd = _clamp(shortd, 6, 34)
 
     score = round(insider + instq + shortd, 1)
-    insider_sig = "alcista" if insider_buys >= 2 else "neutral"
+    # "N/D" (no "neutral") cuando el dato no existe: la UI debe poder
+    # distinguir "los directivos están equilibrados" de "no lo sabemos".
+    insider_sig = ("N/D" if not insider_conocido
+                   else "alcista" if insider_buys >= 2 else "neutral")
     if not short_known:
         squeeze = "N/D"
     else:
         squeeze = "alto" if short_pct >= 15 else "medio" if short_pct >= 8 else "bajo"
-    smart = "acumulando" if insider_buys >= 2 else "neutral"
+    smart = ("neutral" if not insider_conocido
+             else "acumulando" if insider_buys >= 2 else "neutral")
 
     pros, cons = [], []
     if insider_buys >= 2:
@@ -884,7 +956,7 @@ def score_institutional(holders, info):
         pros.append("Casi nadie apuesta a que la acción baje (muy pocas ventas en corto)")
     if short_known and short_pct >= 15:
         cons.append(f"Bastantes inversores apuestan a que baje ({_pct(short_pct,0)} de las acciones disponibles vendidas en corto)")
-    if insider_sells >= 3 and insider_buys == 0:
+    if insider_conocido and insider_sells >= 3 and insider_buys == 0:
         cons.append(f"Los directivos solo vendieron ({insider_sells} ventas, 0 compras) — sin señal de convicción compradora")
     if inst_pct is not None and inst_pct > 90:
         cons.append("Demasiada concentración de fondos (poco margen para que entren más compradores grandes)")
@@ -929,6 +1001,22 @@ def score_institutional(holders, info):
         partes.append(
             f"Los directivos (los 'insiders') registraron {insider_buys} compras y {insider_sells} ventas "
             f"recientes: una actividad mixta que no inclina la balanza en ninguna dirección.")
+    elif not insider_conocido:
+        # Antes, con 0 compras y 0 ventas NO se emitía ninguna rama: la parte
+        # de directivos desaparecía del análisis sin decir por qué.
+        if insider_exento:
+            _pais = holders.get("insiders_pais") or "su país de origen"
+            partes.append(
+                f"Sobre los directivos (los 'insiders'): esta acción cotiza en Nueva York como ADR de "
+                f"una empresa de {_pais}, y los emisores extranjeros están EXENTOS de declarar sus "
+                f"compras y ventas al regulador estadounidense. No es que no hayan comprado: ese dato "
+                f"no existe públicamente para ningún inversor. Por eso esta pieza queda fuera de la "
+                f"lectura y NO penaliza la calificación.")
+        else:
+            partes.append(
+                "El registro de operaciones de los directivos no se ha podido recuperar en este momento. "
+                "Se reintentará automáticamente; mientras tanto esta pieza queda fuera de la lectura y "
+                "no penaliza la calificación.")
     # 4) Apuestas a la baja (short interest), explicado.
     if short_known and short_pct > 0:
         nivel = ("muy bajo" if short_pct < 3 else "moderado" if short_pct < 10 else "alto")
@@ -978,15 +1066,9 @@ def score_institutional(holders, info):
             "institutional_quality": round(instq, 1),
             "short_interest_dynamic": round(shortd, 1),
         },
-        "key_insight": (
-            (f"Lo más relevante: los directivos están comprando ({insider_buys} compras recientes), "
-             f"la señal interna más valiosa, con un respaldo institucional del {_pct(inst_pct,0)}.")
-            if insider_buys >= 2 else
-            (f"Lo más relevante: respaldo institucional del {_pct(inst_pct,0)} pero sin compras de "
-             f"directivos que confirmen convicción interna" +
-             (f"; pocos apuestan en contra (short interest {_pct(short_pct,0)})."
-              if short_known else "."))
-        ),
+        "key_insight": _key_insight_institucional(
+            insider_conocido, insider_exento, insider_buys, insider_sells,
+            inst_pct, short_known, short_pct),
     }
 
 

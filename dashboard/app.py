@@ -2074,6 +2074,32 @@ def render_fundamentals(analysis: StockAnalysis):
     gross_marg = ratios.get("gross_margin")
     if gross_marg is None: gross_marg = _safe_num(km.get("gross_margin"))
 
+    # ── Métricas que NO APLICAN a este tipo de negocio ───────────────────
+    # Un banco no reporta coste de ventas: su margen bruto llega como 0.0 y
+    # se pintaba "0.0%" en ROJO con el termómetro al mínimo (le pasaba a JPM,
+    # UNTY, CIB…). Ahora se dice claramente que la métrica no aplica.
+    try:
+        from data.industry_labels import (metricas_no_aplicables,
+                                          motivo_no_aplica, tipo_negocio)
+        _tipo_neg = tipo_negocio(info.get("sector"), info.get("industry"))
+        _no_aplican = metricas_no_aplicables(info.get("sector"), info.get("industry"))
+    except Exception:
+        _tipo_neg, _no_aplican = "general", frozenset()
+        def motivo_no_aplica(m, t): return ""
+
+    def _tile_na(metrica, valor, tile):
+        """Convierte un tile en 'No aplica' SOLO si el dato falta o es 0 exacto.
+        Un valor real jamás se oculta."""
+        if metrica in _no_aplican and (valor is None or valor == 0):
+            _m = motivo_no_aplica(metrica, _tipo_neg)
+            tile = dict(tile)
+            tile["value"] = "No aplica"
+            tile["color"] = "#5E6570"
+            tile["meter"] = None
+            if _m:
+                tile["tooltip"] = _m
+        return tile
+
     _render_metric_tiles([
         {"icon": "📈", "label": "Revenue Growth YoY",
          "value": f"{rev_growth:+.1f}%" if rev_growth is not None else "—",
@@ -2085,16 +2111,18 @@ def render_fundamentals(analysis: StockAnalysis):
          "color": "#3DD68C" if (roic or 0) > 15 else "#E2B25C" if (roic or 0) > 8 else "#F1495F",
          "meter": _meter_scale(roic, 0, 25),
          "tooltip": "Return on Invested Capital. >15% indica negocio de alta calidad."},
-        {"icon": "💵", "label": "FCF Yield",
-         "value": f"{fcf_yield:.2f}%" if fcf_yield is not None else "—",
-         "color": "#3DD68C" if (fcf_yield or 0) > 5 else "#E2B25C" if (fcf_yield or 0) > 2 else "#F1495F",
-         "meter": _meter_scale(fcf_yield, 0, 8),
-         "tooltip": "Free Cash Flow Yield. FCF / Market Cap. >5% es atractivo."},
-        {"icon": "📊", "label": "Gross Margin",
-         "value": f"{gross_marg:.1f}%" if gross_marg is not None else "—",
-         "color": "#3DD68C" if (gross_marg or 0) > 50 else "#E2B25C" if (gross_marg or 0) > 30 else "#F1495F",
-         "meter": _meter_scale(gross_marg, 20, 70),
-         "tooltip": "Margen bruto: indica pricing power. >50% es excepcional."},
+        _tile_na("fcf_yield", fcf_yield, {
+            "icon": "💵", "label": "FCF Yield",
+            "value": f"{fcf_yield:.2f}%" if fcf_yield is not None else "—",
+            "color": "#3DD68C" if (fcf_yield or 0) > 5 else "#E2B25C" if (fcf_yield or 0) > 2 else "#F1495F",
+            "meter": _meter_scale(fcf_yield, 0, 8),
+            "tooltip": "Free Cash Flow Yield. FCF / Market Cap. >5% es atractivo."}),
+        _tile_na("gross_margin", gross_marg, {
+            "icon": "📊", "label": "Gross Margin",
+            "value": f"{gross_marg:.1f}%" if gross_marg is not None else "—",
+            "color": "#3DD68C" if (gross_marg or 0) > 50 else "#E2B25C" if (gross_marg or 0) > 30 else "#F1495F",
+            "meter": _meter_scale(gross_marg, 20, 70),
+            "tooltip": "Margen bruto: indica pricing power. >50% es excepcional."}),
     ])
 
     # ── Valoración tiles ─────────────────────────────────────────
@@ -2118,10 +2146,10 @@ def render_fundamentals(analysis: StockAnalysis):
          "value": f"{fwd_pe:.1f}" if fwd_pe else "—", "color": "#6FA3E0",
          "meter": _meter_scale(fwd_pe, 8, 40, invert=True),
          "tooltip": "Price/Earnings forward. Basado en el EPS estimado del próximo año. Si está bastante por debajo del trailing, indica crecimiento esperado."},
-        {"icon": "🏛️", "label": "EV/EBITDA",
+        _tile_na("ev_ebitda", ev_ebit, {"icon": "🏛️", "label": "EV/EBITDA",
          "value": f"{ev_ebit:.1f}" if ev_ebit else "—", "color": "#9D8CE0",
          "meter": _meter_scale(ev_ebit, 8, 24, invert=True),
-         "tooltip": "Enterprise Value / EBITDA. <12 suele ser atractivo, >20 ya es caro. Es más fiable que P/E para comparar empresas con diferente estructura de capital."},
+         "tooltip": "Enterprise Value / EBITDA. <12 suele ser atractivo, >20 ya es caro. Es más fiable que P/E para comparar empresas con diferente estructura de capital."}),
         {"icon": "🏦", "label": "Debt/Equity",
          "value": f"{de:.2f}" if de is not None else "—",
          "color": "#3DD68C" if (de or 0) < 0.5 else "#E2B25C" if (de or 0) < 1.5 else "#F1495F",
@@ -2157,7 +2185,14 @@ def render_fundamentals(analysis: StockAnalysis):
             "tooltip": "Return on Equity: rentabilidad sobre patrimonio. >15% es excelente, indica gestión eficiente del capital de accionistas.",
         })
     cr = ratios.get("current_ratio")
-    if cr is not None:
+    if cr is None and "current_ratio" in _no_aplican:
+        # El tile desaparecía entero en bancos; ahora explica por qué.
+        extra_tiles.append({
+            "icon": "💧", "label": "Current Ratio", "value": "No aplica",
+            "color": "#5E6570", "meter": None,
+            "tooltip": motivo_no_aplica("current_ratio", _tipo_neg) or
+                       "No es una métrica significativa en este tipo de negocio."})
+    elif cr is not None:
         extra_tiles.append({
             "icon": "💧", "label": "Current Ratio",
             "value": f"{cr:.2f}",
@@ -2388,13 +2423,24 @@ def render_institutional(analysis: StockAnalysis):
         return (not v) or str(v).strip() in ("", "N/A", "N/D", "—", "None")
 
     _fresh_km = {}
-    if _tile_empty(km.get("institutional_ownership")) or not holders_raw.get("top_institutions"):
+    # También se refresca cuando falta el VEREDICTO sobre los insiders: los
+    # análisis guardados antes de esta versión no lo traen, y sin él un ADR
+    # exento mostraría "fuente no disponible" en vez de explicar la exención.
+    if (_tile_empty(km.get("institutional_ownership"))
+            or not holders_raw.get("top_institutions")
+            or "insiders_disponibles" not in holders_raw):
         try:
             from data.market_data import get_holders_data, get_company_info
             from agents.code_engine import score_institutional
             _fresh_h = get_holders_data(analysis.ticker) or {}
             if not holders_raw.get("top_institutions") and _fresh_h.get("top_institutions"):
                 holders_raw = _fresh_h
+            elif "insiders_disponibles" not in holders_raw and _fresh_h:
+                # Solo se COMPLETA el veredicto; los datos buenos ya guardados
+                # (top de tenedores, %) se conservan intactos.
+                for _k in ("insiders_disponibles", "insiders_motivo", "insiders_pais"):
+                    if _k in _fresh_h:
+                        holders_raw = {**holders_raw, _k: _fresh_h[_k]}
             if _fresh_h.get("institutional_ownership_pct") is not None:
                 _fresh_km = (score_institutional(
                     _fresh_h, get_company_info(analysis.ticker) or {}) or {}).get("key_metrics", {}) or {}
@@ -2438,15 +2484,39 @@ def render_institutional(analysis: StockAnalysis):
                    "warn" if short_num < 15 else "bad")
     short_meter = _meter_scale(short_num, 0, 20, invert=True)
 
+    # ── Señal de insiders: distinguir "no lo sabemos" de "está equilibrado" ──
+    # Los emisores extranjeros con ADR están EXENTOS de declarar a la SEC, así
+    # que un "NEUTRAL" gris era indistinguible de "hay datos y están parejos".
+    _ins_disp = holders_raw.get("insiders_disponibles")
+    _ins_val = _clean_tile_value(insider_raw, max_len=12)
+    _ins_level, _ins_sub = insider_level, "Compras vs ventas"
+    _ins_tip = ("Qué están haciendo los directivos y personas con información privilegiada "
+                "(insiders) con sus propias acciones. Compras netas = confianza en el futuro "
+                "(señal alcista); ventas fuertes = posible cautela. Comprar es más "
+                "significativo que vender.")
+    if _ins_disp is False:
+        _pais_ins = holders_raw.get("insiders_pais") or "su país de origen"
+        _ins_val, _ins_level = "No publica", "neutral"
+        _ins_sub = "Emisor extranjero (ADR)"
+        _ins_tip = (f"Esta acción cotiza en EE. UU. como ADR de una empresa de {_pais_ins}. "
+                    "Los emisores extranjeros están EXENTOS de declarar las compras y ventas "
+                    "de sus directivos al regulador estadounidense, así que el dato NO EXISTE "
+                    "públicamente en ninguna fuente. No significa que no haya actividad — y "
+                    "por eso no penaliza la calificación.")
+    elif _ins_disp is None and not (holders_raw.get("insider_transactions") or []):
+        _ins_val, _ins_level = "N/D", "neutral"
+        _ins_sub = "Fuente no disponible"
+        _ins_tip = ("El registro de operaciones de directivos no se ha podido recuperar en "
+                    "este momento. Se reintentará automáticamente en el próximo análisis.")
+
     _render_status_pills([
         {"label": "Propiedad Institucional",
          "value": _extract_percent(inst_raw),
          "level": inst_level, "meter": inst_meter, "sub": "% del capital en fondos",
          "tooltip": "Porcentaje de las acciones en manos de grandes fondos e instituciones (el 'dinero inteligente'). Una propiedad alta indica respaldo profesional; muy baja o en caída puede indicar falta de interés institucional."},
         {"label": "Señal de Insiders",
-         "value": _clean_tile_value(insider_raw, max_len=12),
-         "level": insider_level, "sub": "Compras vs ventas",
-         "tooltip": "Qué están haciendo los directivos y personas con información privilegiada (insiders) con sus propias acciones. Compras netas = confianza en el futuro (señal alcista); ventas fuertes = posible cautela. Comprar es más significativo que vender."},
+         "value": _ins_val, "level": _ins_level, "sub": _ins_sub,
+         "tooltip": _ins_tip},
         {"label": "Short Interest",
          "value": _extract_percent(short_raw),
          "level": short_level, "meter": short_meter, "sub": "Apuestas a la baja",
@@ -2459,6 +2529,8 @@ def render_institutional(analysis: StockAnalysis):
 
     # ── Top holders bar chart ──
     top_inst = holders_raw.get("top_institutions") or []
+    if not top_inst:
+        st.caption("El desglose de los mayores tenedores no está disponible para este valor.")
     if top_inst:
         fig = build_holders_bars(top_inst)
         _plotly(fig, use_container_width=True,
@@ -2466,7 +2538,32 @@ def render_institutional(analysis: StockAnalysis):
                         key=f"chart_inst_holders_{analysis.ticker}")
 
     # ── Actividad reciente de directivos (insiders) ──
+    # El título se pinta SIEMPRE: antes, si no había datos, desaparecían el
+    # título, el contador y la tabla sin decir una palabra al usuario.
     insider_txns = holders_raw.get("insider_transactions") or []
+    if not insider_txns:
+        st.markdown('<div class="section-title-bar">Actividad Reciente de Directivos (Insiders)</div>',
+                    unsafe_allow_html=True)
+        if _ins_disp is False:
+            _pais_ins = holders_raw.get("insiders_pais") or "su país de origen"
+            _render_insight_card(
+                "Por qué no hay datos de directivos",
+                f"Esta acción cotiza en EE. UU. como ADR de una empresa de {_pais_ins}. "
+                f"Los emisores extranjeros están <strong>exentos</strong> de declarar las compras "
+                f"y ventas de sus directivos al regulador estadounidense, así que este dato no "
+                f"existe públicamente para ningún inversor —ni aquí ni en ninguna otra "
+                f"plataforma—. No significa que no haya actividad interna, y por eso "
+                f"<strong>no penaliza la calificación</strong>. En este valor la lectura del "
+                f"dinero inteligente se apoya en la propiedad institucional y en las posiciones "
+                f"en corto, que sí son públicas.",
+                color="#9D8CE0", icon="🌐")
+        else:
+            _render_insight_card(
+                "Datos de directivos no disponibles",
+                "El registro de operaciones de los directivos no se ha podido recuperar en este "
+                "momento. Se reintentará automáticamente en el próximo análisis; mientras tanto "
+                "esta pieza queda fuera de la lectura y no penaliza la calificación.",
+                color="#8D949E", icon="⏳")
     if insider_txns:
         n_buys = holders_raw.get("recent_insider_buys", 0) or 0
         n_sells = holders_raw.get("recent_insider_sells", 0) or 0

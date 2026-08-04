@@ -127,6 +127,7 @@ TTL_FINANCIALS   = 24.0     # 24 horas — fundamentales (quarterly)
 TTL_EARNINGS     = 2.0      # 2 horas — fechas y resultados de earnings
 TTL_NEWS         = 0.5      # 30 minutos — noticias deben ser frescas
 TTL_HOLDERS      = 12.0     # 12 horas — institucionales/insiders
+TTL_HOLDERS_PARCIAL = 1.0    # 1 hora — resultado sin institucionales: reintentar pronto
 TTL_MACRO        = 1.0      # 1 hora — indicadores macro
 TTL_RS           = 1.0      # 1 hora — relative strength
 TTL_SNAPSHOT     = 0.05     # 3 minutos — precios en vivo
@@ -341,7 +342,11 @@ def get_company_info(ticker: str) -> dict:
         "financial_currency": info.get("financialCurrency", ""),
         "sector":          info.get("sector", "Unknown"),
         "industry":        info.get("industry", "Unknown"),
-        "country":         info.get("country", "US"),
+        # Sin default "US": en cloud .info viene vacío y CIB/TM decían ser
+        # estadounidenses, lo que desactivaba la detección de emisor extranjero
+        # (y con ella la explicación de por qué no hay datos de insiders).
+        # El merge con TradingView lo rellena con el país REAL.
+        "country":         info.get("country") or "",
         "market_cap":      info.get("marketCap", 0),
         "employees":       info.get("fullTimeEmployees", 0),
         "description":     info.get("longBusinessSummary", ""),
@@ -413,9 +418,20 @@ def get_company_info(ticker: str) -> dict:
                 not result.get("forward_pe") or
                 not result.get("ev_ebitda") or
                 not result.get("revenue_ttm") or
-                not result.get("profit_margin"))
+                not result.get("profit_margin") or
+                # Sospecha de ESCALA ROTA: país no-US declarado, divisas
+                # distintas, o un múltiplo fuera de rango. Para una acción
+                # sana de EE.UU. nada de esto se cumple → cero red extra.
+                _sospechoso_de_escala(result))
+    # (el propio _sospechoso_de_escala ya cubre la divisa mixta declarada)
+    tv = {}
     if needs_tv:
-        tv = _get_company_info_from_tradingview(ticker)
+        # Blindaje: aunque la función ya captura sus errores, un fallo aquí
+        # (import roto, cambio de API…) NO puede tumbar todo el análisis.
+        try:
+            tv = _get_company_info_from_tradingview(ticker) or {}
+        except Exception:
+            tv = {}
         # Placeholders que deben tratarse como "vacío" para que el fallback los
         # rellene (antes "Unknown"/"N/A" eran truthy y BLOQUEABAN el merge —
         # por eso el sector se quedaba en "Unknown" aunque TV sí lo trae).
@@ -428,6 +444,67 @@ def get_company_info(ticker: str) -> dict:
         # Re-derivar name si seguía con el ticker como nombre
         if result.get("name") == ticker and tv.get("name"):
             result["name"] = tv["name"]
+
+    # ── PERFIL DEL EMISOR + MERGE CORRECTIVO ─────────────────────────────
+    # El merge de arriba solo rellena HUECOS: un P/B de 0.0021 es "truthy" y
+    # por eso sobrevivía. Aquí, y SOLO cuando la escala está demostradamente
+    # rota, se SOBRESCRIBE con TradingView (que normaliza a USD y por clase de
+    # acción, y coincide con yfinance al 5º decimal cuando el dato está sano).
+    _perf = _perfil_emisor(result, tv)
+    result["pais_emisor"] = _perf["pais"]
+    result["emisor_extranjero"] = _perf["extranjero"]
+    result["divisa_mixta"] = _perf["divisa_mixta"]
+    result["escala_rota"] = _perf["escala_rota"]
+
+    # Dos correcciones INDEPENDIENTES, porque son dos averías distintas:
+    #   · MÚLTIPLOS rotos (escala_rota): P/B de CIB 0.0021, de BRK-B 0.001…
+    #   · ABSOLUTOS en moneda local (divisa_mixta): el revenue de HMC son
+    #     21.796.600 millones de YENES y la UI los pintaba como "$21.796,6B".
+    # HMC es el caso que demuestra que hacen falta las dos: su P/B está bien
+    # (0.51 vs 0.52 de TV) pero sus absolutos están en yenes.
+    corregidos = []
+    if _perf["escala_rota"] and tv:
+        _CORRECTIVOS = {            # clave local  ← clave de TV (ya en USD)
+            "pb_ratio":    "pb_ratio_fq",   # el que empata con yfinance al 5º decimal
+            "ps_ratio":    "ps_ratio",
+            "pe_ratio":    "pe_ratio",
+            "forward_pe":  "forward_pe",
+            "ev_ebitda":   "ev_ebitda",
+        }
+        for _k, _tvk in _CORRECTIVOS.items():
+            _v = tv.get(_tvk)
+            if _v is not None and _ratio_plausible(_k, _v):
+                result[_k] = _v
+                corregidos.append(_k)
+
+    if _perf["escala_rota"] and result.get("book_value_yf") is not None:
+        # El book value por acción es la RAÍZ del P/B roto (BRK-B: 505.559 de
+        # la clase A con precio de la clase B). Se anula aunque la empresa sea
+        # estadounidense y el resto de sus absolutos estén perfectos.
+        result["book_value_yf"] = None
+
+    if _perf["divisa_mixta"]:
+        # Estados en otra moneda: revenue_ttm sí lo cubre TradingView en USD.
+        _rev_tv = (tv or {}).get("revenue_ttm")
+        if _rev_tv and _rev_tv > 0:
+            result["revenue_ttm"] = _rev_tv
+            corregidos.append("revenue_ttm")
+        elif result.get("revenue_ttm") is not None:
+            result["revenue_ttm"] = None      # mejor "—" que una cifra en yenes
+        # El resto de absolutos NO los cubre TV y seguirían en moneda local:
+        # se anulan para que la UI muestre "—" en vez de un "$" sobre yenes.
+        for _k in ("ebitda_yf", "fcf_yf", "ocf_yf", "total_cash_yf",
+                   "total_debt_yf", "enterprise_value_yf",
+                   "ev_revenue_yf", "peg_ratio"):
+            if result.get(_k) is not None:
+                result[_k] = None
+        result["moneda_estados_local"] = True
+
+    if corregidos:
+        result["ratios_corregidos"] = corregidos
+
+    # Red secundaria: descartar lo que siga siendo imposible tras el merge.
+    _sanear_ratios(result)
 
     # Short interest: si yfinance no lo trajo (None en cloud), completar con
     # Nasdaq (solo cubre valores del NASDAQ) y, si tampoco, con FINRA, que
@@ -454,6 +531,167 @@ def get_company_info(ticker: str) -> dict:
     return result
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# FIABILIDAD DE RATIOS — detección de "escala rota" y validador de rangos
+# ══════════════════════════════════════════════════════════════════════════
+# Yahoo calcula algunos múltiplos MEZCLANDO magnitudes de escalas distintas.
+# Dos causas reales, ambas medidas en producción:
+#   · ADR extranjero: precio en USD ÷ book value por acción en moneda local
+#     → CIB (Colombia) P/B = 0.0021 cuando el real es ~2.2; TM (Japón) = 15.31
+#       cuando el real es ~0.97.
+#   · Clases de acción con distinto nominal: BRK-B usa el book value de la
+#     clase A ($505.559) con el precio de la clase B ($513) → P/B = 0.001015
+#     cuando el real es ~1.52. Y BRK-B es estadounidense: NO es cosa de divisas.
+# TradingView normaliza a USD y por clase, y coincide con Yahoo AL QUINTO
+# DECIMAL cuando el dato está sano (JPM 2.651289 vs 2.651298; GOOG, MSFT,
+# BF-B, LEN-B, HEI-A → factor 1.0000). Por eso el detector NO mira metadatos
+# de divisa (que en cloud no existen): compara los dos P/B y busca una
+# CONTRADICCIÓN DE ESCALA. Es el único método que funciona en Render.
+
+_PAISES_US = {"united states", "united states of america", "usa", "us", "u.s.",
+              "estados unidos"}
+
+
+def _es_num(x) -> bool:
+    """True si x es un número real utilizable (descarta None, NaN, inf, bool)."""
+    try:
+        if x is None or isinstance(x, bool):
+            return False
+        f = float(x)
+        return f == f and f not in (float("inf"), float("-inf"))
+    except (TypeError, ValueError):
+        return False
+
+# Un factor de 1.5× ya es imposible por ruido de cálculo: los sanos dan 1.0000.
+_FACTOR_ESCALA_ROTA = 1.5
+
+
+def _variantes_tv(ticker: str) -> list:
+    """Nombres con los que TradingView puede conocer al ticker.
+    Las clases se escriben con PUNTO en TV (BRK-B → BRK.B); yfinance usa guion."""
+    tk = str(ticker or "").upper().strip()
+    variantes = [tk]
+    if "-" in tk:
+        variantes.append(tk.replace("-", "."))
+    elif "." in tk:
+        variantes.append(tk.replace(".", "-"))
+    return variantes
+
+
+def _sospechoso_de_escala(result: dict) -> bool:
+    """¿Merece la pena pedir TradingView para contrastar? NUNCA lanza.
+    Para una acción sana de EE.UU. devuelve False → no se gasta ni una llamada."""
+    try:
+        pais = str(result.get("country") or "").strip().lower()
+        if pais and pais not in _PAISES_US:
+            return True
+        tc = str(result.get("trading_currency") or "").upper()
+        fc = str(result.get("financial_currency") or "").upper()
+        if tc and fc and tc != fc:
+            return True
+        for nombre in ("pb_ratio", "ps_ratio", "pe_ratio"):
+            v = result.get(nombre)
+            if v is not None and not _ratio_plausible(nombre, v):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _perfil_emisor(result: dict, tv: Optional[dict] = None) -> dict:
+    """Perfil de procedencia y fiabilidad de escala. NUNCA lanza.
+
+    Devuelve {pais, extranjero, escala_rota, divisa_mixta, confianza}.
+      · escala_rota → los múltiplos de yfinance mezclan escalas y NO son
+        fiables (sea por divisa o por clase de acción).
+      · divisa_mixta → se conserva para el guard de ratios calculados que ya
+        existía (fcf_yield, ev_revenue).
+    """
+    try:
+        pais = str(result.get("country") or (tv or {}).get("country") or "").strip()
+        extranjero = bool(pais) and pais.lower() not in _PAISES_US
+
+        tc = str(result.get("trading_currency") or "").upper()
+        fc = str(result.get("financial_currency") or "").upper()
+        divisa_mixta = bool(tc and fc and tc != fc)
+
+        # Contradicción de escala: el juez es el P/B, porque es el ratio que
+        # más se rompe (book value por acción) y el que TV replica exacto.
+        escala_rota = False
+        confianza = "baja"
+        yf_pb = result.get("pb_ratio")
+        tv_pb = (tv or {}).get("pb_ratio_fq")
+        if _es_num(yf_pb) and _es_num(tv_pb) and yf_pb > 0 and tv_pb > 0:
+            factor = yf_pb / tv_pb
+            escala_rota = bool(factor > _FACTOR_ESCALA_ROTA or
+                               factor < 1.0 / _FACTOR_ESCALA_ROTA)
+            confianza = "alta"
+        elif divisa_mixta:
+            # Sin par comparable pero con divisas distintas declaradas: se
+            # asume rota (es el comportamiento conservador ya vigente).
+            escala_rota = True
+            confianza = "media"
+
+        return {"pais": pais, "extranjero": extranjero,
+                "escala_rota": escala_rota,
+                # divisa_mixta REAL (estados en otra moneda). Se infiere del
+                # país cuando no hay metadatos, porque un emisor no-US casi
+                # siempre reporta en su divisa local.
+                "divisa_mixta": divisa_mixta or (extranjero and escala_rota),
+                "confianza": confianza}
+    except Exception:
+        return {"pais": "", "extranjero": False, "escala_rota": False,
+                "divisa_mixta": False, "confianza": "baja"}
+
+
+# Rangos DELIBERADAMENTE amplios: solo descartan lo matemáticamente imposible,
+# nunca un valor simplemente raro. Su lista de descartes debe ser casi vacía.
+_RANGOS_PLAUSIBLES = {
+    "pe_ratio":        (0.3, 1000.0),
+    "forward_pe":      (0.3, 1000.0),
+    "pb_ratio":        (0.02, 200.0),
+    "ps_ratio":        (0.01, 300.0),
+    "ev_ebitda":       (0.3, 300.0),
+    "ev_revenue_yf":   (0.01, 300.0),
+    "peg_ratio":       (-50.0, 100.0),
+    "current_ratio_yf": (0.0, 60.0),
+    "debt_equity_yf":  (0.0, 100.0),
+    "beta":            (-5.0, 8.0),
+    # OJO: en esta app dividend_yield viaja en PORCENTAJE (MSFT = 0.78 → 0.78%),
+    # no en decimal. Un rango 0-0.40 descartaba TODOS los dividendos reales.
+    "dividend_yield":  (0.0, 40.0),
+}
+
+
+def _ratio_plausible(nombre: str, v) -> bool:
+    """¿El valor cae dentro de lo físicamente posible? NUNCA lanza."""
+    try:
+        if not _es_num(v):
+            return False
+        rango = _RANGOS_PLAUSIBLES.get(nombre)
+        if rango is None:
+            return True
+        return rango[0] <= float(v) <= rango[1]
+    except Exception:
+        return False
+
+
+def _sanear_ratios(result: dict) -> None:
+    """Pone a None los ratios imposibles y deja constancia en el propio dict.
+    Red SECUNDARIA: la primaria es el merge correctivo. NUNCA lanza."""
+    try:
+        descartados = []
+        for nombre in _RANGOS_PLAUSIBLES:
+            v = result.get(nombre)
+            if v is not None and not _ratio_plausible(nombre, v):
+                result[nombre] = None
+                descartados.append(f"{nombre}={v}")
+        if descartados:
+            result["ratios_descartados"] = descartados
+    except Exception:
+        pass
+
+
 def _get_company_info_from_tradingview(ticker: str) -> dict:
     """Fallback de fundamentales via TradingView para los campos críticos que
     se pierden cuando yfinance.info está rate-limitado (Render, Streamlit
@@ -466,7 +704,8 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "name", "description", "sector", "industry", "close",
                 "market_cap_basic", "price_earnings_ttm",
                 "price_earnings_forward", "enterprise_value_ebitda_ttm",
-                "price_sales_ratio", "price_book_ratio",
+                "price_sales_ratio", "price_book_ratio", "price_book_fq",
+                "country", "currency",
                 "dividend_yield_recent", "total_revenue_ttm",
                 "gross_margin", "operating_margin", "net_margin",
                 "return_on_equity", "return_on_assets",
@@ -480,7 +719,7 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "total_revenue_yoy_growth_ttm",
                 "earnings_per_share_diluted_yoy_growth_ttm",
             )
-            .where(col("name") == ticker.upper())
+            .where(col("name").isin(_variantes_tv(ticker)))
             .limit(1)
         )
         _, df = q.get_scanner_data()
@@ -522,6 +761,13 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             "ev_ebitda":      _f("enterprise_value_ebitda_ttm"),
             "ps_ratio":       _f("price_sales_ratio"),
             "pb_ratio":       _f("price_book_ratio"),
+            # `price_book_fq` es el que empata con yfinance al 5º decimal en
+            # acciones sanas (price_book_ratio difiere ~5%). Va en clave APARTE
+            # para no alterar el merge de huecos existente: solo lo usa el
+            # detector de escala rota y el merge correctivo.
+            "pb_ratio_fq":    _f("price_book_fq"),
+            "country":        str(row.get("country", "") or "") or None,
+            "trading_currency": str(row.get("currency", "") or "") or None,
             # Margins: TV→decimal para compatibilidad con yfinance
             "dividend_yield": _pct_to_dec("dividend_yield_recent"),
             "revenue_ttm":    _f("total_revenue_ttm"),
@@ -1454,6 +1700,11 @@ def _get_short_interest_from_nasdaq(ticker: str, float_shares=None) -> dict:
 def get_holders_data(ticker: str) -> dict:
     key = f"holders_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_HOLDERS)
+    # Un resultado PARCIAL (sin institucionales) vive solo 1 h: se reintenta
+    # pronto por si la fuente estaba caída, sin re-pegar a red en cada rerun.
+    if cached and cached.get("_parcial") and \
+            not _load_cache(key, ttl_hours=TTL_HOLDERS_PARCIAL):
+        cached = None
     if cached:
         return cached
 
@@ -1574,10 +1825,46 @@ def get_holders_data(ticker: str) -> dict:
             result["recent_insider_buys"] = nd.get("recent_insider_buys", 0)
             result["recent_insider_sells"] = nd.get("recent_insider_sells", 0)
 
-    # Solo cachear si conseguimos algo útil: así un fallo transitorio de red no
-    # queda "congelado" como vacío durante 12h (causa del bug de secciones vacías).
-    if result.get("top_institutions") or result.get("institutional_ownership_pct") is not None:
-        _save_cache(key, result)
+    # ── VEREDICTO SOBRE LOS INSIDERS ─────────────────────────────────────
+    # Los emisores extranjeros que cotizan en EE.UU. mediante ADR (CIB, BSAC,
+    # TM…) están EXENTOS de declarar las operaciones de sus directivos a la SEC
+    # (Rule 3a12-3(b)): el dato NO EXISTE en ninguna fuente — verificado, ni
+    # yfinance ni Nasdaq lo tienen. Eso es MUY distinto de "la fuente falló",
+    # que sí se debe reintentar. Sin esta marca, la app trataba la ausencia
+    # como un 0 (una afirmación) y penalizaba el score.
+    if result.get("insider_transactions"):
+        result["insiders_disponibles"] = True
+        result["insiders_motivo"] = ""
+    else:
+        _inf = {}
+        try:
+            _inf = _load_cache(f"info_{ticker}", ttl_hours=TTL_COMPANY_INFO) or {}
+            if not _inf:
+                _inf = get_company_info(ticker) or {}
+        except Exception:
+            _inf = {}
+        if _inf.get("emisor_extranjero"):
+            result["insiders_disponibles"] = False        # NO existe, por ley
+            result["insiders_motivo"] = "emisor_extranjero"
+            result["insiders_pais"] = _inf.get("pais_emisor", "")
+        else:
+            result["insiders_disponibles"] = None         # desconocido: reintentar
+            result["insiders_motivo"] = "fuente_no_disponible"
+        # None (no 0): un 0 afirma "no hubo compras", y eso no lo sabemos.
+        result["recent_insider_buys"] = None
+        result["recent_insider_sells"] = None
+
+    # Cacheado en dos niveles: así un fallo transitorio de red no queda
+    # "congelado" como vacío durante 12h (causa del bug de secciones vacías),
+    # pero tampoco se re-pega a red en CADA rerun cuando el vacío es legítimo.
+    _util = bool(result.get("top_institutions")) or \
+        result.get("institutional_ownership_pct") is not None
+    if _util:
+        _save_cache(key, result)                              # 12 h, como siempre
+    elif result.get("insiders_disponibles") is not None:
+        # Sabemos ALGO (aunque sea que el emisor está exento): merece caché
+        # corta para no martillear la red, pero se reintenta pronto.
+        _save_cache(key, {**result, "_parcial": True})        # 1 h
     return result
 
 
