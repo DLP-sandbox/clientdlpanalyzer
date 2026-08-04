@@ -450,6 +450,11 @@ def get_company_info(ticker: str) -> dict:
     # por eso sobrevivía. Aquí, y SOLO cuando la escala está demostradamente
     # rota, se SOBRESCRIBE con TradingView (que normaliza a USD y por clase de
     # acción, y coincide con yfinance al 5º decimal cuando el dato está sano).
+    # ROIC de respaldo (TradingView) — se guarda siempre que venga: el cálculo
+    # interno falla en bancos y así el indicador deja de faltar.
+    if tv.get("roic_tv") is not None and _ratio_plausible("roic_tv", tv["roic_tv"]):
+        result["roic_tv"] = tv["roic_tv"]
+
     _perf = _perfil_emisor(result, tv)
     result["pais_emisor"] = _perf["pais"]
     result["emisor_extranjero"] = _perf["extranjero"]
@@ -499,6 +504,21 @@ def get_company_info(ticker: str) -> dict:
             if result.get(_k) is not None:
                 result[_k] = None
         result["moneda_estados_local"] = True
+
+    # PEG: se anula arriba porque el de la fuente venía calculado con el P/E
+    # corrupto. Pero es RECONSTRUIBLE: P/E corregido ÷ crecimiento de
+    # beneficios. Así el indicador deja de faltar en los ADRs.
+    if result.get("peg_ratio") is None:
+        try:
+            _pe = result.get("pe_ratio")
+            _g = result.get("earnings_growth_yf")      # decimal (0.15 = 15%)
+            if _es_num(_pe) and _es_num(_g) and _pe > 0 and _g > 0:
+                _peg = _pe / (_g * 100.0)
+                if _ratio_plausible("peg_ratio", _peg):
+                    result["peg_ratio"] = _peg
+                    corregidos.append("peg_ratio(calculado)")
+        except Exception:
+            pass
 
     if corregidos:
         result["ratios_corregidos"] = corregidos
@@ -705,7 +725,7 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
                 "market_cap_basic", "price_earnings_ttm",
                 "price_earnings_forward", "enterprise_value_ebitda_ttm",
                 "price_sales_ratio", "price_book_ratio", "price_book_fq",
-                "country", "currency",
+                "country", "currency", "return_on_invested_capital_fq",
                 "dividend_yield_recent", "total_revenue_ttm",
                 "gross_margin", "operating_margin", "net_margin",
                 "return_on_equity", "return_on_assets",
@@ -767,6 +787,11 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
             # detector de escala rota y el merge correctivo.
             "pb_ratio_fq":    _f("price_book_fq"),
             "country":        str(row.get("country", "") or "") or None,
+            # ROIC de TradingView: nuestro cálculo interno (operating_income /
+            # capital invertido) no lo consigue en BANCOS, porque sus estados
+            # no traen esas partidas — faltaba en JPM, UNTY, CIB… TV sí lo
+            # publica, así que se usa como respaldo (ya viene en %).
+            "roic_tv":        _f("return_on_invested_capital_fq"),
             "trading_currency": str(row.get("currency", "") or "") or None,
             # Margins: TV→decimal para compatibilidad con yfinance
             "dividend_yield": _pct_to_dec("dividend_yield_recent"),
@@ -1019,6 +1044,12 @@ def compute_quality_ratios(info: dict, financials: dict) -> dict:
     _tc = str(info.get("trading_currency") or "").upper()
     _fc = str(info.get("financial_currency") or "").upper()
     _divisa_mixta = bool(_tc and _fc and _tc != _fc)
+
+    # ROIC: si el cálculo propio no salió (típico en BANCOS, cuyos estados no
+    # traen "capital invertido"), usar el de la fuente de respaldo. Antes el
+    # indicador salía vacío en JPM, UNTY, CIB…
+    if ratios.get("roic") is None and info.get("roic_tv") is not None:
+        ratios["roic"] = float(info["roic_tv"])
 
     # FCF Yield: preferir FCF TTM directo de YF
     fcf0 = safe(fcf, 0)
