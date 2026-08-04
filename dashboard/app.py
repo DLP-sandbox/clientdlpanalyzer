@@ -438,6 +438,8 @@ _REC_TO_SLUG = {
     "MUY ATRACTIVO":  "strong_buy",
     "ATRACTIVO":      "buy",
     "EN OBSERVACIÓN": "watch",
+    "POCO ATRACTIVO": "pass",
+    # Backward compat: análisis guardados antes del renombrado
     "EVITAR":         "pass",
     "STRONG BUY":     "strong_buy",
     "BUY":            "buy",

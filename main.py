@@ -120,6 +120,13 @@ Ejemplos:
 
 def _print_analysis(analysis):
     rec_symbols = {
+        # Nombres actuales (español)
+        "MUY ATRACTIVO":  "🟢🟢",
+        "ATRACTIVO":      "🟢",
+        "EN OBSERVACIÓN": "🟡",
+        "POCO ATRACTIVO": "🔴",
+        # Backward compat (nombres antiguos)
+        "EVITAR":     "🔴",
         "STRONG BUY": "🟢🟢",
         "BUY":        "🟢",
         "WATCH":      "🟡",

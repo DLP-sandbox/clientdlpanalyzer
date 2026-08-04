@@ -44,7 +44,7 @@ THRESHOLDS = {
     "MUY ATRACTIVO":   85,
     "ATRACTIVO":       70,
     "EN OBSERVACIÓN":  50,
-    "EVITAR":           0,
+    "POCO ATRACTIVO":   0,
 }
 
 # Screener — filtros básicos de universo (legacy fallback cuando no se pasan filtros custom)

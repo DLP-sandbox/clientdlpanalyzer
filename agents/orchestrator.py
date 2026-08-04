@@ -67,7 +67,7 @@ GUÍA DE RECOMENDACIÓN (umbrales internos, los vetos automáticos se aplican en
 - MUY ATRACTIVO (≥85): calidad excepcional + asimetría favorable + convergencia técnico/fundamental
 - ATRACTIVO (70-84): empresa de calidad clara, asimetría positiva o neutra
 - EN OBSERVACIÓN (50-69): tesis razonable pero esperando mejor timing o confirmación
-- EVITAR (<50): calidad pobre o asimetría claramente negativa
+- POCO ATRACTIVO (<50): calidad pobre o asimetría claramente negativa
 
 REGLAS DE PREMIO PARA CALIDAD EXCEPCIONAL:
 - Si fundamentals ≥ 80 Y future ≥ 80 → es un COMPOUNDER. Aunque haya R/R tight, score 75+ es legítimo.
@@ -78,7 +78,7 @@ Retorna SIEMPRE este JSON:
 ```json
 {
   "composite_score": <0-100>,
-  "recommendation": "<MUY ATRACTIVO|ATRACTIVO|EN OBSERVACIÓN|EVITAR>",
+  "recommendation": "<MUY ATRACTIVO|ATRACTIVO|EN OBSERVACIÓN|POCO ATRACTIVO>",
   "conviction_level": "<HIGH|MEDIUM|LOW>",
   "investment_thesis": "<tesis de inversión en EXACTAMENTE 2 párrafos, MÁXIMO 10 líneas en total — concisa y de alto nivel. Separa los párrafos con \\n\\n>",
   "key_strengths": ["<fortaleza 1>", "<fortaleza 2>", "<fortaleza 3>"],
@@ -420,13 +420,13 @@ class Orchestrator:
 
         # Veto R/R: un R/R subóptimo es una señal de TIMING, no de calidad rota.
         # Por eso solo impide que la acción llegue a ATRACTIVO (la limita al rango
-        # EN OBSERVACIÓN, tope 69), pero NUNCA la tira a EVITAR como antes hacía
+        # EN OBSERVACIÓN, tope 69), pero NUNCA la tira a POCO ATRACTIVO como antes hacía
         # erróneamente (capeaba a 49). Solo aplica sin calidad excepcional que lo
         # compense.
         computed = risk_data.get("computed_risk", {}) or {}
         rr = float(computed.get("rr_ratio", 0)) if computed.get("rr_ratio") else 0
         if rr > 0 and rr < 2.0 and fund_score < 70 and fut_score < 70:
-            cap = THRESHOLDS["ATRACTIVO"] - 1   # tope EN OBSERVACIÓN (69), no EVITAR
+            cap = THRESHOLDS["ATRACTIVO"] - 1   # tope EN OBSERVACIÓN (69), no POCO ATRACTIVO
             if composite > cap:
                 composite = cap
                 vetos_applied.append(f"R/R {rr:.1f}:1 bajo sin calidad excepcional — limitado a EN OBSERVACIÓN")
@@ -605,7 +605,7 @@ class Orchestrator:
             return "ATRACTIVO"
         if score >= THRESHOLDS["EN OBSERVACIÓN"]:
             return "EN OBSERVACIÓN"
-        return "EVITAR"
+        return "POCO ATRACTIVO"
 
     def _code_synthesis(self, ticker, reports, weighted_score, score_breakdown) -> dict:
         """Síntesis POR CÓDIGO (sin IA): arma tesis, fortalezas, riesgos y

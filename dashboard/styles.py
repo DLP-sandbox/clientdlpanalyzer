@@ -4599,8 +4599,9 @@ def get_recommendation_badge(recommendation: str) -> str:
         "MUY ATRACTIVO":   "badge-strong-buy",
         "ATRACTIVO":       "badge-buy",
         "EN OBSERVACIÓN":  "badge-watch",
-        "EVITAR":          "badge-pass",
+        "POCO ATRACTIVO":  "badge-pass",
         # Backward compat para análisis viejos
+        "EVITAR":          "badge-pass",
         "STRONG BUY":      "badge-strong-buy",
         "BUY":             "badge-buy",
         "WATCH":           "badge-watch",

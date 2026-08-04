@@ -418,6 +418,13 @@ def build_gauge(score: float, recommendation: str) -> go.Figure:
     en figuras pequeñas)."""
 
     rec_colors = {
+        # Nombres actuales (español)
+        "MUY ATRACTIVO":  "#3DD68C",
+        "ATRACTIVO":      "#6FA3E0",
+        "EN OBSERVACIÓN": "#E2B25C",
+        "POCO ATRACTIVO": "#F1495F",
+        # Backward compat (nombres antiguos)
+        "EVITAR":     "#F1495F",
         "STRONG BUY": "#3DD68C",
         "BUY":        "#6FA3E0",
         "WATCH":      "#E2B25C",
