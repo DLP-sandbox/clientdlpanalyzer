@@ -2260,7 +2260,16 @@ def render_fundamentals(analysis: StockAnalysis):
         div_str, div_color = "—", "#5E6570"
     div_tip = ("Dividendo anual en dólares por acción. Es solo informativo: "
                "NO entra en ningún score ni en el análisis.")
-    if _div_status == "paga" and "yield" in _div_fuente:
+    if _div_status == "paga" and _div_fuente.startswith("tradingview"):
+        # OJO: no prometer "±5%" aquí. Esta vía deriva la cifra del dividendo
+        # REALMENTE PAGADO en los últimos 12 meses, mientras que la fuente
+        # principal da la tasa anualizada vigente. En emisores de EE.UU. ambas
+        # coinciden (medido ≤4% de diferencia), pero en extranjeros —pagos
+        # semestrales, variables o extraordinarios— divergen de verdad: CIB
+        # 7.19% vs 2.76%, SAN 1.38% vs 1.97%. Se avisa en vez de fingir precisión.
+        div_tip += (" Calculado sobre lo repartido en los últimos 12 meses; "
+                    "puede diferir de la tasa anualizada vigente.")
+    elif _div_status == "paga" and "yield" in _div_fuente:
         div_tip += " Estimado a partir del yield y el precio actual (±5%)."
     elif _div_status == "no_paga":
         div_tip += " Verificado en todas las fuentes: esta empresa no reparte dividendo."
