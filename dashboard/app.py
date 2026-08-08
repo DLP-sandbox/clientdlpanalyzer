@@ -56,6 +56,7 @@ def build_rsi_gauge(*a, **k):          return _charts().build_rsi_gauge(*a, **k)
 def build_metric_bars(*a, **k):        return _charts().build_metric_bars(*a, **k)
 def build_earnings_history_chart(*a, **k): return _charts().build_earnings_history_chart(*a, **k)
 def build_sentiment_gauge(*a, **k):    return _charts().build_sentiment_gauge(*a, **k)
+def build_fear_greed_gauge(*a, **k):   return _charts().build_fear_greed_gauge(*a, **k)
 def build_holders_bars(*a, **k):       return _charts().build_holders_bars(*a, **k)
 
 
@@ -425,9 +426,12 @@ def get_client():
 
 # ── Header ────────────────────────────────────────────────────────────────
 def render_header():
+    # Solo el chip de fecha/hora, alineado a la derecha y pegado al contenido.
+    # La marca pequeña de arriba a la izquierda se retiró: era redundante con
+    # el título grande del home (y con la marca del sidebar) y, junto con su
+    # borde y márgenes, creaba una franja de espacio muerto en TODAS las vistas.
     st.markdown(f"""
     <div class="terminal-topbar">
-        <span class="terminal-topbar-brand">◈ DLP MARKET ANALYZER</span>
         <span class="terminal-topbar-time">{datetime.now().strftime("%Y-%m-%d · %H:%M")}</span>
     </div>
     """, unsafe_allow_html=True)
@@ -477,6 +481,7 @@ def _sb_load_scan(scan_id: str):
     st.session_state.scan_results = results
     st.session_state.current_scan_id = scan_id
     st.session_state._show_scan_results = True
+    st.session_state._radar_scroll_top = True
     st.session_state.selected_ticker = None
     st.session_state.quick_view_ticker = None
     st.session_state.scanner_config_open = False
@@ -519,8 +524,7 @@ def render_sidebar():
 
         # ── Botón minimizar columna — el CSS lo posiciona (absoluto) sobre
         #    la misma línea del logo, arriba a la derecha. ─────────────────
-        if st.button("«", key="sidebar_collapse_btn",
-                     help="Minimizar la columna"):
+        if st.button("«", key="sidebar_collapse_btn"):
             st.session_state.sidebar_collapsed = True
             st.rerun()
 
@@ -531,7 +535,7 @@ def render_sidebar():
             st.rerun()
 
         # ── Historial: Análisis de Acciones (PRIMERO) ───────────────────
-        st.markdown('<div class="sb-section-title">◈  Análisis · Acciones</div>',
+        st.markdown('<div class="sb-section-title">◈  Análisis Recientes</div>',
                     unsafe_allow_html=True)
 
         analyses = st.session_state.get("analyses", {}) or {}
@@ -577,10 +581,15 @@ def render_sidebar():
                     f'0 0 8px rgba({_glow},0.45);"></span></div>'
                 )
 
+                # Tipo de activo en pequeño junto al ticker (misma etiqueta que
+                # el header del análisis): ACCIÓN / ETF / CRIPTO, fina y gris.
+                _tipo_txt = {"accion": "ACCIÓN", "etf": "ETF", "crypto": "CRIPTO"}.get(
+                    getattr(analysis, "asset_type", "accion") or "accion", "ACCIÓN")
                 with st.container(key=f"sbcard_{tk_safe}__rk_{rec_slug}"):
                     st.markdown(
                         f'<div class="sb-card-head">'
-                        f'<span class="sb-card-ticker">◈ {ticker}</span>'
+                        f'<span class="sb-card-ticker">◈ {ticker}'
+                        f'<span class="sb-card-tipo">{_tipo_txt}</span></span>'
                         f'<span class="sb-card-score" style="--sc:{color};">'
                         f'{score:.1f}'
                         f'<span class="sb-card-score-max">/100</span></span>'
@@ -696,6 +705,16 @@ def _is_analyzable_stock(ticker: str) -> bool:
         return True
 
 
+def _detectar_tipo_seguro(ticker: str) -> str:
+    """Tipo de activo ('accion'|'etf'|'etf_no_us'|'crypto'|'crypto_no_soportada')
+    con fail-open a 'accion' ante cualquier error — nunca bloquea un ticker real."""
+    try:
+        from data.market_data import detectar_tipo_activo
+        return detectar_tipo_activo(ticker)
+    except Exception:
+        return "accion"
+
+
 # ── Run Analysis ──────────────────────────────────────────────────────────
 _DEBUG_LOG_PATH = "/tmp/dlp_debug.log"
 _DEBUG_LOG_MAX = 512 * 1024          # 512 KB
@@ -760,6 +779,14 @@ def run_analysis(ticker: str):
         "HONDA": "HMC", "TOYOTA": "TM", "SONY": "SONY", "FERRARI": "RACE",
         "VISA": "V", "MASTERCARD": "MA", "PEPSI": "PEP", "PEPSICO": "PEP",
         "NIKE": "NKE", "AIRBNB": "ABNB", "UBER": "UBER", "SPOTIFY": "SPOT",
+        # ETFs por nombre común
+        "SP500": "SPY", "SANDP500": "SPY", "NASDAQ100": "QQQ", "NASDAQ": "QQQ",
+        "VANGUARD500": "VOO", "RUSSELL2000": "IWM", "ORO": "GLD", "GOLD": "GLD",
+        # Criptos por nombre (el símbolo directo BTC/ETH… lo resuelve la detección)
+        "BITCOIN": "BTC", "ETHEREUM": "ETH", "ETHER": "ETH", "SOLANA": "SOL",
+        "RIPPLE": "XRP", "CARDANO": "ADA", "DOGECOIN": "DOGE",
+        "POLKADOT": "DOT", "CHAINLINK": "LINK", "AVALANCHE": "AVAX",
+        "LITECOIN": "LTC", "TONCOIN": "TON", "POLYGON": "POL", "TRON": "TRX",
     }
     _sugerido = _NOMBRE_A_TICKER.get(ticker.replace("-", "").replace("_", ""))
     if _sugerido and _sugerido != ticker:
@@ -791,16 +818,31 @@ def run_analysis(ticker: str):
             return
         _debug_log(f"  yahoo confirmed {ticker} exists")
 
-        # 2b. Debe ser una ACCIÓN. Si es un ETF o una criptomoneda (BTC, SPY…),
-        #     abortamos con un mensaje simple — este análisis es solo de acciones.
-        with st.spinner(f"Verificando que {ticker} sea una acción…"):
-            _is_stock = _is_analyzable_stock(ticker)
-        if not _is_stock:
-            st.error(
-                f"❌ El nombre ingresado (**{ticker}**) no es una acción. "
-                "El análisis solo está disponible para acciones."
-            )
-            _debug_log(f"  {ticker} is not a stock (ETF/crypto/other) — aborting")
+        # 2b. Tipo de activo → cada tipo tiene SU análisis (acción, ETF US o
+        #     cripto del universo) o su cartel honesto cuando no está cubierto.
+        with st.spinner(f"Identificando el tipo de activo de {ticker}…"):
+            _tipo_activo = _detectar_tipo_seguro(ticker)
+        if _tipo_activo == "etf_no_us":
+            _render_insight_card(
+                "Este ETF europeo no está en el universo cubierto",
+                f"**{ticker}** cotiza en una bolsa europea. Por ahora el análisis de ETFs "
+                "cubre únicamente los domiciliados en Estados Unidos, donde las fuentes de "
+                "datos permiten un análisis completo y fiable. Muchos ETFs europeos tienen "
+                "un equivalente estadounidense sobre el mismo índice — prueba con su ticker "
+                "de EE.UU. (por ejemplo, S&P 500 → **SPY** o **VOO**) — y los UCITS más "
+                "populares SÍ están cubiertos: **CSPX, VUAA, VUSA, VWCE, VWRL, IWDA, "
+                "XDWD, EQQQ, CNDX, ISAC** (en cualquiera de sus bolsas).",
+                color="#9D8CE0", icon="🌐")
+            _debug_log(f"  {ticker} is a non-US ETF — cartel shown")
+            return
+        if _tipo_activo == "crypto_no_soportada":
+            _render_insight_card(
+                "Esta criptomoneda no está en el universo analizable",
+                f"**{ticker}** no forma parte de las criptomonedas principales que cubre "
+                "el análisis. Están disponibles las grandes del mercado: BTC, ETH, SOL, "
+                "XRP, BNB, ADA, DOGE, AVAX, LINK, DOT, LTC, TRX, TON, POL y SHIB.",
+                color="#9D8CE0", icon="◈")
+            _debug_log(f"  {ticker} crypto outside universe — cartel shown")
             return
 
     existing = st.session_state.analyses.get(ticker)
@@ -812,11 +854,14 @@ def run_analysis(ticker: str):
         # cuando la fuente no cubría el NYSE (KO, JPM…). Ahora hay respaldo FINRA
         # para todas las acciones de EE.UU., así que se re-analiza para
         # completarlo en vez de arrastrar el hueco para siempre.
+        # SOLO aplica a ACCIONES: un ETF o una cripto no tienen reporte
+        # institucional y sin este guard se re-analizarían en cada apertura.
         _stale = False
         try:
-            _inst = (getattr(existing, "reports", {}) or {}).get("institutional")
-            _si = ((getattr(_inst, "key_metrics", {}) or {}).get("short_interest") or "")
-            _stale = str(_si).strip().upper() in ("N/D", "N/A", "—", "")
+            if getattr(existing, "asset_type", "accion") == "accion":
+                _inst = (getattr(existing, "reports", {}) or {}).get("institutional")
+                _si = ((getattr(_inst, "key_metrics", {}) or {}).get("short_interest") or "")
+                _stale = str(_si).strip().upper() in ("N/D", "N/A", "—", "")
         except Exception:
             _stale = False
         if _stale:
@@ -841,17 +886,38 @@ def run_analysis(ticker: str):
     loading_placeholder = st.empty()
     status_container = st.empty()
 
+    # El tipo pudo no detectarse arriba (p. ej. el ticker venía cacheado en
+    # session_state y se saltó la verificación). La detección está cacheada
+    # 7 días, así que esta llamada es instantánea en la práctica.
+    try:
+        _tipo_activo
+    except NameError:
+        _tipo_activo = _detectar_tipo_seguro(ticker)
+
     # 6 agentes × 2 eventos (Analizando + Completado) = 12 ticks + Orquestador = 13
     # (macro+sentiment+catalysts ahora son 1 solo agente combinado: market_context)
-    TOTAL_TICKS = 13
+    # ETF: 4 secciones × 2 = 8 · Cripto: 5 × 2 = 10.
+    TOTAL_TICKS = {"accion": 13, "etf": 8, "crypto": 10}.get(_tipo_activo, 13)
+    _metodo_analisis = {
+        "accion": orchestrator.analyze,
+        "etf": orchestrator.analyze_etf,
+        "crypto": orchestrator.analyze_crypto,
+    }.get(_tipo_activo, orchestrator.analyze)
     progress_count = [0.0]
     current_agent = [""]
     synthesis_started = [False]
 
+    # Lanzado desde el RADAR: nada de skeleton en flujo (aparecía debajo de la
+    # tarjeta pulsada) — solo el fondo oscurecido y el spinner de siempre.
+    _desde_radar = bool(st.session_state.get("_show_scan_results")
+                        or st.session_state.scan_results)
+    _base_carga = ('<div class="alpha-dim-backdrop"></div>' if _desde_radar
+                   else _skeleton_analysis_full_html())
+
     def _render_frame(smooth_pct: float):
         agent_label = current_agent[0] or "Iniciando agentes…"
         loading_placeholder.markdown(
-            _skeleton_analysis_full_html() + _spinner_overlay_html(
+            _base_carga + _spinner_overlay_html(
                 text=f"ANÁLISIS DLP · {ticker}",
                 sub=agent_label,
                 progress=smooth_pct,
@@ -878,8 +944,8 @@ def run_analysis(ticker: str):
     def _run_bg():
         _debug_log(f"  [bg thread] STARTED for {ticker}")
         try:
-            analysis_result[0] = orchestrator.analyze(ticker, progress_callback=progress_callback)
-            _debug_log(f"  [bg thread] orchestrator.analyze RETURNED for {ticker}")
+            analysis_result[0] = _metodo_analisis(ticker, progress_callback=progress_callback)
+            _debug_log(f"  [bg thread] {_metodo_analisis.__name__} RETURNED for {ticker}")
         except Exception as e:
             import traceback as _tb
             analysis_error[0] = e
@@ -930,8 +996,11 @@ def run_analysis(ticker: str):
         pass
 
     analysis = analysis_result[0]
-    st.session_state.analyses[ticker] = analysis
-    st.session_state.selected_ticker = ticker
+    # Clave = el ticker CANÓNICO del análisis (una cripto escrita como
+    # "BTC-USD" se guarda como "BTC"); para acciones es el mismo de siempre.
+    _tk_final = getattr(analysis, "ticker", None) or ticker
+    st.session_state.analyses[_tk_final] = analysis
+    st.session_state.selected_ticker = _tk_final
     st.session_state.quick_view_ticker = None
     st.session_state.analyzing = False
     # Acotar la memoria: conservar solo los N análisis más recientes en RAM
@@ -973,20 +1042,57 @@ def run_market_scan(filters: Optional[dict] = None):
     st.session_state.scan_running = True
     screener = ScreenerAgent()
 
-    progress_placeholder = st.empty()
-    progress_bar = st.progress(0)
+    # ── Carga con el MISMO lenguaje que los análisis (skeleton + spinner) y
+    # duración GARANTIZADA de 10 segundos exactos: el progreso lo gobierna el
+    # reloj, no el avance real. Si el escaneo real termina antes, el overlay
+    # sigue animándose hasta cumplir los 10.0 s; si tardara más (rate-limits),
+    # se sostiene en ~94% hasta acabar — el mínimo son siempre 10 s. ──
+    _DURACION_SCAN = 10.0
+    loading_placeholder = st.empty()
+    _skel = ('<div class="qt-skel-grid">'
+             + '<div class="qt-skel skeleton-block"></div>' * 10 + '</div>') * 2
 
-    def scan_callback(ticker, idx, total):
-        pct = idx / total if total > 0 else 0
-        progress_bar.progress(pct)
-        progress_placeholder.markdown(
-            f'<div style="color:#C08E3B;font-family:JetBrains Mono;font-size:0.85rem;">'
-            f'🌐 Escaneando el mercado · {ticker} ({idx}/{total})</div>',
+    _estado_sub = ["Preparando el universo de acciones…"]
+    _t0 = time.time()
+
+    def _pintar():
+        transcurrido = time.time() - _t0
+        pct = min(transcurrido / _DURACION_SCAN * 100.0, 94.0)
+        loading_placeholder.markdown(
+            _skel + _spinner_overlay_html(
+                text="ESCANEANDO EL MERCADO",
+                sub=_estado_sub[0],
+                progress=pct,
+            ),
             unsafe_allow_html=True,
         )
 
-    with st.spinner("Escaneando el mercado…"):
-        results = screener.run_full_scan(callback=scan_callback, filters=filters)
+    _ultimo_pintado = [0.0]
+
+    def scan_callback(ticker, idx, total):
+        _estado_sub[0] = f"◎ {ticker}  ·  {idx}/{total} analizadas"
+        # Repintar como MUCHO 4 veces/segundo: hacerlo por cada ticker frenaba
+        # el escaneo real (medido: de segundos a minutos).
+        ahora = time.time()
+        if ahora - _ultimo_pintado[0] >= 0.25:
+            _ultimo_pintado[0] = ahora
+            _pintar()
+
+    _pintar()
+    results = screener.run_full_scan(callback=scan_callback, filters=filters)
+
+    # Completar los 10 s exactos con la animación viva (radar en barrido).
+    _estado_sub[0] = "Ordenando candidatos por puntaje…"
+    while time.time() - _t0 < _DURACION_SCAN:
+        _pintar()
+        time.sleep(0.15)
+    loading_placeholder.markdown(
+        _skel + _spinner_overlay_html(text="ESCANEANDO EL MERCADO",
+                                      sub="Listo", progress=100.0),
+        unsafe_allow_html=True,
+    )
+    time.sleep(0.25)
+    loading_placeholder.empty()
 
     # Guardar diagnóstico para mostrar en la pantalla de resultados
     try:
@@ -994,15 +1100,12 @@ def run_market_scan(filters: Optional[dict] = None):
     except Exception:
         st.session_state._scan_diagnostics = {}
 
-    progress_bar.progress(1.0)
-    progress_placeholder.empty()
-    progress_bar.empty()
-
     st.session_state.scan_results = results
     st.session_state.scan_running = False
     # Forzar mostrar la pantalla de resultados aunque la lista venga vacía
     # (así el usuario ve "0 candidatos" en vez de ser devuelto al home).
     st.session_state._show_scan_results = True
+    st.session_state._radar_scroll_top = True
 
     # Los escaneos YA NO SE PERSISTEN. Cada uno pesa muchísimo (cientos de
     # acciones con todos sus datos) y era la mayor fuente de consumo de RAM en
@@ -1207,6 +1310,48 @@ def _render_insight_card(title, content, color="#E2B25C", icon="💡"):
         <div class="insight-card-body">{_no_latex(content)}</div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def _render_disclaimer():
+    """Aviso legal al pie del Overview y del Riesgo.
+
+    Deliberadamente discreto: mismo fondo oscuro que las demás tarjetas, gris
+    apagado y letra pequeña. Tiene que estar y poder leerse, no robar atención
+    al análisis. NUNCA lanza: es lo último que se pinta en la sección y no
+    puede tumbarla."""
+    try:
+        st.markdown(
+            # OJO: <div>, no <p>. La regla `.stMarkdown p` de styles.py fija
+            # color con !important y tamaño 0.88rem, y se comía tanto el gris
+            # apagado como la letra pequeña de este aviso.
+            '<div class="disclaimer-card"><div class="disclaimer-text">'
+            'DLP Analyzer se conecta y analiza en vivo los datos de mercado de cada acción. '
+            'Esto no es una recomendación de inversión ni asesoría financiera personalizada.'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
+
+def _aviso_ucits(analysis) -> None:
+    """Tarjeta de señalización para ETFs UCITS: deja claro que la composición
+    y el comportamiento mostrados son los del ÍNDICE que replica, vía su gemelo
+    americano. Solo aparece en fondos UCITS. NUNCA lanza."""
+    try:
+        km = (analysis.reports.get("etf_perfil").key_metrics or {}) if analysis.reports.get("etf_perfil") else {}
+        if not km.get("ucits"):
+            return
+        _render_insight_card(
+            "Fondo UCITS (domiciliado en Europa)",
+            f"Cotiza como <strong>{km.get('listado')}</strong> en {km.get('divisa_listado')}. "
+            f"Los datos del fondo (coste, gestora, domicilio) son los del UCITS; la composición y el "
+            f"comportamiento del precio corresponden al índice <strong>{km.get('indice')}</strong> que "
+            f"replica, analizados a través de su gemelo americano <strong>{km.get('gemelo_us')}</strong> "
+            f"(mismo índice, datos en USD).",
+            color="#6FA3E0", icon="🌐")
+    except Exception:
+        pass
 
 
 def _safe_num(value, default=None):
@@ -2090,12 +2235,27 @@ def render_fundamentals(analysis: StockAnalysis):
         def motivo_no_aplica(m, t): return ""
 
     def _tile_na(metrica, valor, tile):
-        """Convierte un tile en 'No aplica' SOLO si el dato falta o es 0 exacto.
-        Un valor real jamás se oculta."""
+        """Marca el tile con "—" SOLO si el dato falta o es 0 exacto y además la
+        métrica no tiene sentido en este negocio. Un valor real jamás se oculta.
+
+        Se muestra "—" (igual que cualquier otro hueco) en vez de "No aplica":
+        el porqué se explica en el tooltip, sin gritar en la tarjeta.
+
+        Se probó a marcar por TIPO DE NEGOCIO (siempre que la métrica estuviera
+        en la lista del tipo) y se descartó: ocultaba cifras REPORTADAS. Realty
+        Income publica coste de ventas y activo/pasivo corriente en sus estados,
+        así que su margen bruto (92,6 %) y su ratio corriente (2,06) son reales
+        y deben verse, aunque sea un REIT. La etiqueta del sector no decide si
+        un dato existe; el dato decide.
+
+        OJO: esto es SOLO pintura. Que el score no castigue estos huecos lo
+        garantiza `_na_neutro` en agents/code_engine.py (score_fundamentals y
+        score_future), que los convierte en None para que el cálculo los excluya
+        o use su valor neutro."""
         if metrica in _no_aplican and (valor is None or valor == 0):
             _m = motivo_no_aplica(metrica, _tipo_neg)
             tile = dict(tile)
-            tile["value"] = "No aplica"
+            tile["value"] = "—"
             tile["color"] = "#5E6570"
             tile["meter"] = None
             if _m:
@@ -2190,7 +2350,7 @@ def render_fundamentals(analysis: StockAnalysis):
     if cr is None and "current_ratio" in _no_aplican:
         # El tile desaparecía entero en bancos; ahora explica por qué.
         extra_tiles.append({
-            "icon": "💧", "label": "Current Ratio", "value": "No aplica",
+            "icon": "💧", "label": "Current Ratio", "value": "—",
             "color": "#5E6570", "meter": None,
             "tooltip": motivo_no_aplica("current_ratio", _tipo_neg) or
                        "No es una métrica significativa en este tipo de negocio."})
@@ -2462,24 +2622,53 @@ def render_institutional(analysis: StockAnalysis):
     # También se refresca cuando falta el VEREDICTO sobre los insiders: los
     # análisis guardados antes de esta versión no lo traen, y sin él un ADR
     # exento mostraría "fuente no disponible" en vez de explicar la exención.
+    # Y AHORA además cuando ese veredicto se emitió SIN haber preguntado a la
+    # SEC: esos análisis afirman que no hay datos de directivos cuando sí los
+    # hay (CIB tiene 59 Form 4). Sin esta condición seguirían mintiendo hasta
+    # que caducara la caché de 12 h.
+    _sin_sec = ("sec" not in (holders_raw.get("insiders_fuentes") or [])
+                and not (holders_raw.get("insider_transactions") or []))
     if (_tile_empty(km.get("institutional_ownership"))
             or not holders_raw.get("top_institutions")
-            or "insiders_disponibles" not in holders_raw):
+            or "insiders_disponibles" not in holders_raw
+            or _sin_sec):
         try:
             from data.market_data import get_holders_data, get_company_info
             from agents.code_engine import score_institutional
             _fresh_h = get_holders_data(analysis.ticker) or {}
             if not holders_raw.get("top_institutions") and _fresh_h.get("top_institutions"):
                 holders_raw = _fresh_h
-            elif "insiders_disponibles" not in holders_raw and _fresh_h:
-                # Solo se COMPLETA el veredicto; los datos buenos ya guardados
-                # (top de tenedores, %) se conservan intactos.
-                for _k in ("insiders_disponibles", "insiders_motivo", "insiders_pais"):
+            elif _sin_sec and _fresh_h.get("insider_transactions"):
+                # La SEC rescató operaciones que el análisis guardado no tenía:
+                # entran junto con su veredicto y sus contadores.
+                for _k in ("insider_transactions", "recent_insider_buys",
+                           "recent_insider_sells", "insiders_disponibles",
+                           "insiders_motivo", "insiders_pais", "insiders_fuentes"):
                     if _k in _fresh_h:
                         holders_raw = {**holders_raw, _k: _fresh_h[_k]}
+            elif ("insiders_disponibles" not in holders_raw or _sin_sec) and _fresh_h:
+                # Solo se COMPLETA el veredicto; los datos buenos ya guardados
+                # (top de tenedores, %) se conservan intactos.
+                for _k in ("insiders_disponibles", "insiders_motivo",
+                           "insiders_pais", "insiders_fuentes"):
+                    if _k in _fresh_h:
+                        holders_raw = {**holders_raw, _k: _fresh_h[_k]}
+            _fresh_score = score_institutional(
+                _fresh_h, get_company_info(analysis.ticker) or {}) or {}
             if _fresh_h.get("institutional_ownership_pct") is not None:
-                _fresh_km = (score_institutional(
-                    _fresh_h, get_company_info(analysis.ticker) or {}) or {}).get("key_metrics", {}) or {}
+                _fresh_km = _fresh_score.get("key_metrics", {}) or {}
+            # Los TEXTOS guardados también quedan obsoletos: los análisis
+            # anteriores dejaron escrito "los emisores extranjeros están EXENTOS
+            # de declarar…" tanto en el insight como en la narrativa larga, y
+            # esas frases se siguen pintando aunque los datos ya estén
+            # corregidos. Si esta vez SÍ hay operaciones, ambos se reescriben.
+            if _sin_sec and _fresh_h.get("insider_transactions"):
+                if _fresh_score.get("key_insight"):
+                    rd = {**rd, "key_insight": _fresh_score["key_insight"]}
+                if _fresh_score.get("analysis"):
+                    import copy as _copy
+                    report = _copy.copy(report)
+                    report.analysis = _fresh_score["analysis"]
         except Exception:
             _fresh_km = {}
 
@@ -2521,8 +2710,8 @@ def render_institutional(analysis: StockAnalysis):
     short_meter = _meter_scale(short_num, 0, 20, invert=True)
 
     # ── Señal de insiders: distinguir "no lo sabemos" de "está equilibrado" ──
-    # Los emisores extranjeros con ADR están EXENTOS de declarar a la SEC, así
-    # que un "NEUTRAL" gris era indistinguible de "hay datos y están parejos".
+    # Cuando el regulador no tiene ninguna operación declarada del emisor, un
+    # "NEUTRAL" gris era indistinguible de "hay datos y están parejos".
     _ins_disp = holders_raw.get("insiders_disponibles")
     _ins_val = _clean_tile_value(insider_raw, max_len=12)
     _ins_level, _ins_sub = insider_level, "Compras vs ventas"
@@ -2531,14 +2720,13 @@ def render_institutional(analysis: StockAnalysis):
                 "(señal alcista); ventas fuertes = posible cautela. Comprar es más "
                 "significativo que vender.")
     if _ins_disp is False:
-        _pais_ins = holders_raw.get("insiders_pais") or "su país de origen"
-        _ins_val, _ins_level = "No publica", "neutral"
-        _ins_sub = "Emisor extranjero (ADR)"
-        _ins_tip = (f"Esta acción cotiza en EE. UU. como ADR de una empresa de {_pais_ins}. "
-                    "Los emisores extranjeros están EXENTOS de declarar las compras y ventas "
-                    "de sus directivos al regulador estadounidense, así que el dato NO EXISTE "
-                    "públicamente en ninguna fuente. No significa que no haya actividad — y "
-                    "por eso no penaliza la calificación.")
+        _ins_val, _ins_level = "Sin registro", "neutral"
+        _ins_sub = "Nada declarado al regulador"
+        _ins_tip = ("Se consultó directamente el registro del organismo regulador "
+                    "estadounidense y no consta ninguna operación declarada por los "
+                    "directivos de esta empresa. No significa que no haya actividad "
+                    "interna: puede que este emisor no esté obligado a declararla. "
+                    "Por eso no penaliza la calificación.")
     elif _ins_disp is None and not (holders_raw.get("insider_transactions") or []):
         _ins_val, _ins_level = "N/D", "neutral"
         _ins_sub = "Fuente no disponible"
@@ -2581,17 +2769,15 @@ def render_institutional(analysis: StockAnalysis):
         st.markdown('<div class="section-title-bar">Actividad Reciente de Directivos (Insiders)</div>',
                     unsafe_allow_html=True)
         if _ins_disp is False:
-            _pais_ins = holders_raw.get("insiders_pais") or "su país de origen"
             _render_insight_card(
                 "Por qué no hay datos de directivos",
-                f"Esta acción cotiza en EE. UU. como ADR de una empresa de {_pais_ins}. "
-                f"Los emisores extranjeros están <strong>exentos</strong> de declarar las compras "
-                f"y ventas de sus directivos al regulador estadounidense, así que este dato no "
-                f"existe públicamente para ningún inversor —ni aquí ni en ninguna otra "
-                f"plataforma—. No significa que no haya actividad interna, y por eso "
-                f"<strong>no penaliza la calificación</strong>. En este valor la lectura del "
-                f"dinero inteligente se apoya en la propiedad institucional y en las posiciones "
-                f"en corto, que sí son públicas.",
+                "Se consultó <strong>directamente el registro del organismo regulador "
+                "estadounidense</strong>, que es el origen de este dato, y no consta ninguna "
+                "operación declarada por los directivos de esta empresa. No significa que no "
+                "haya actividad interna: puede que este emisor no esté obligado a declararla. "
+                "Por eso <strong>no penaliza la calificación</strong>. En este valor la lectura "
+                "del dinero inteligente se apoya en la propiedad institucional y en las "
+                "posiciones en corto, que sí son públicas.",
                 color="#9D8CE0", icon="🌐")
         else:
             _render_insight_card(
@@ -3434,56 +3620,64 @@ def render_agent_tab(analysis: StockAnalysis, agent_key: str):
 
 # ── Scan Results Tab ──────────────────────────────────────────────────────
 def render_scan_results():
-    # ── Top action bar: volver a filtros + volver al home ──
-    col_filters, col_home, _spacer = st.columns([2, 2, 6])
-    with col_filters:
-        if st.button("🔧 Ajustar filtros", key="scan_back_to_filters",
-                     use_container_width=True,
-                     help="Volver al screener para modificar los filtros"):
-            st.session_state.scanner_config_open = True
-            st.session_state._show_scan_results = False
-            st.rerun()
+    """Resultados del escáner como TARJETAS visuales (sparkline, chips, meter),
+    no como tabla. Misma fuente de datos y mismos flags de sesión de siempre."""
+    from dashboard.scanner_filters import SECTOR_OPTIONS
+
+    # ── Barra superior ÚNICA: [⌂ Volver al Inicio (grande)] [🔧 Ajustar filtros]
+    # en la MISMA línea. El topnav global se omite en esta vista y el duplicado
+    # pequeño de "Volver al Inicio" desapareció.
+    col_home, col_filters, _sp = st.columns([2.2, 2, 5.8])
     with col_home:
-        if st.button("⌂ Volver al Inicio", key="scan_back_home",
+        if st.button("⌂  Volver al Inicio", key="topnav_home_btn",
                      use_container_width=True):
             st.session_state.scan_results = []
             st.session_state.current_scan_id = None
             st.session_state._show_scan_results = False
+            st.session_state.scanner_config_open = False
+            st.rerun()
+    with col_filters:
+        if st.button("🔧 Ajustar filtros", key="scan_back_to_filters",
+                     use_container_width=True):
+            st.session_state.scanner_config_open = True
+            st.session_state._show_scan_results = False
             st.rerun()
 
-    st.markdown("## 🌐 Resultados del Scan de Mercado")
-    n = len(st.session_state.scan_results)
-    st.markdown(f"*{n} candidatos pasaron los filtros del screener*")
-
-    # ── Diagnóstico del último scan (visible cuando hay pocos resultados) ──
+    resultados = st.session_state.scan_results or []
+    n = len(resultados)
     diag = st.session_state.get("_scan_diagnostics", {}) or {}
     universe = diag.get("universe_count", 0)
-    passing = diag.get("passing_count", 0)
     err = diag.get("error")
-    if universe or err:
-        # Mostrar SIEMPRE el diagnóstico para entender qué pasó
+    score_medio = (sum(r.screener_score for r in resultados) / n) if n else 0
+
+    # ── Cabecera con identidad de radar (barrido detrás del texto) ──
+    resumen = f"{n} candidatos"
+    if universe:
+        resumen += f" · {universe} acciones analizadas"
+    if n:
+        resumen += f" · score medio {score_medio:.0f}"
+    st.markdown(
+        f'<div class="scan-radar-head"><div class="scan-radar-title">'
+        f'◎ RADAR DE MERCADO</div>'
+        f'<div class="scan-radar-sub">{resumen}</div></div>',
+        unsafe_allow_html=True)
+
+    # Diagnóstico (mismo criterio de siempre)
+    if err or (universe and universe < 100):
         if err:
-            color = "#F1495F"
-            msg = f"❌ Error del escáner: {err}"
-        elif universe < 100:
+            color, msg = "#F1495F", f"❌ Error del escáner: {err}"
+        else:
+            passing = diag.get("passing_count", 0)
             color = "#E2B25C"
             msg = (f"⚠️ El escáner devolvió solo <strong>{universe} acciones</strong> "
                    f"al universo crudo (esperábamos 1000+). De ellas, <strong>{passing}</strong> "
                    f"pasaron los filtros. Puede ser rate-limit transitorio — reintenta en 1-2 min.")
-        else:
-            color = "#6FA3E0"
-            msg = (f"✓ El escáner examinó <strong>{universe} acciones</strong> del universo crudo. "
-                   f"De ellas, <strong>{passing}</strong> pasaron los filtros del usuario.")
         st.markdown(
             f'<div style="background:#101216;border-left:3px solid {color};'
             f'padding:10px 14px;margin:8px 0 16px 0;border-radius:4px;'
-            f'font-size:0.82rem;color:#C9CDD3;">{msg}</div>',
-            unsafe_allow_html=True,
-        )
+            f'font-size:0.82rem;color:#C9CDD3;">{msg}</div>', unsafe_allow_html=True)
 
-    if not st.session_state.scan_results:
-        # Si el flag indica que JUSTO terminó un scan pero quedó vacío,
-        # explicamos por qué (no es un "no hay scan reciente").
+    if not resultados:
         if st.session_state.get("_show_scan_results"):
             st.warning(
                 "El scan se ejecutó pero **0 acciones pasaron los filtros**.\n\n"
@@ -3496,42 +3690,119 @@ def render_scan_results():
             st.info("No hay resultados de scan. Usa el botón 'Escanear el Mercado' en el home.")
         return
 
+    # ── Orden en una línea (solo reordena en memoria) ──
+    _ORDENES = [("Score", "score"), ("Momentum 6M", "mom"),
+                ("Fortaleza RS", "rs"), ("Cerca de máximos", "prox")]
+    _lbl_a_key = {lbl: k for lbl, k in _ORDENES}
+    orden = st.session_state.get("_scan_orden", "score")
+    _lbl_actual = next((lbl for lbl, k in _ORDENES if k == orden), "Score")
+    with st.container(key="scanorden"):
+        oc_head, oc_radio = st.columns([1.6, 6.4], gap="small")
+        with oc_head:
+            st.markdown('<div class="scfila-head"><span class="scfila-icon">⇅</span>'
+                        '<span class="scfila-title">Ordenar por</span></div>',
+                        unsafe_allow_html=True)
+        with oc_radio:
+            _sel = st.radio("Orden", [lbl for lbl, _ in _ORDENES],
+                            index=[lbl for lbl, _ in _ORDENES].index(_lbl_actual),
+                            horizontal=True, key="scan_orden_radio",
+                            label_visibility="collapsed")
+            if _lbl_a_key.get(_sel, "score") != orden:
+                st.session_state._scan_orden = _lbl_a_key[_sel]
+                st.rerun()
+    orden = st.session_state.get("_scan_orden", "score")
+    llave = {"score": lambda r: -r.screener_score,
+             "mom": lambda r: -(r.momentum_6m or 0),
+             "rs": lambda r: -(r.rs_score or 0),
+             "prox": lambda r: -(r.pct_from_52w_high or -999)}[orden]
+    resultados = sorted(resultados, key=llave)
 
-    # Header tabla
-    headers = ["Ticker", "Empresa", "Sector", "Precio", "Market Cap", "Stage", "RS Score", "Mom 6M", "Mom 3M", "Score", "Acción"]
-    col_widths = [1, 2, 2, 1, 1.2, 0.8, 1, 1, 1, 1, 1.2]
+    # ── Sparklines reales para los primeros 24 (un solo lote, cacheado 3 min) ──
+    spark = {}
+    try:
+        from data.market_data import get_live_snapshot
+        spark = get_live_snapshot([r.ticker for r in resultados[:24]]) or {}
+    except Exception:
+        spark = {}
 
-    header_html = '<div style="display:grid;grid-template-columns:' + " ".join([f"{w}fr" for w in col_widths]) + ';gap:8px;padding:6px 8px;background:#101216;border-radius:4px;margin-bottom:4px;">'
-    for h in headers:
-        header_html += f'<div style="font-size:0.65rem;color:#8D949E;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">{h}</div>'
-    header_html += "</div>"
-    st.markdown(header_html, unsafe_allow_html=True)
+    _SECTOR_ES_SCAN = {o["key"]: o["label"] for o in SECTOR_OPTIONS}
+    _STAGE_TXT = {1: ("S1 · Acumulación", "#C08E3B"), 2: ("S2 · Alcista", "#3DD68C"),
+                  3: ("S3 · Distribución", "#E2B25C"), 4: ("S4 · Bajista", "#F1495F")}
 
-    for result in st.session_state.scan_results:
-        color = score_color(result.screener_score)
-        stage_color = {"2": "#3DD68C", "1": "#C08E3B", "0": "#8D949E"}.get(str(result.stage), "#F1495F")
-        mom_color = "#3DD68C" if result.momentum_6m > 0 else "#F1495F"
-        mom3_color = "#3DD68C" if result.momentum_3m > 0 else "#F1495F"
+    # ── Grid de tarjetas: 2 por fila (1 en pantallas estrechas vía CSS) ──
+    for fila_ini in range(0, len(resultados), 2):
+        par = resultados[fila_ini:fila_ini + 2]
+        cols = st.columns(2, gap="medium")
+        for col, r in zip(cols, par):
+            with col:
+                color = score_color(r.screener_score)
+                stage_txt, stage_col = _STAGE_TXT.get(int(r.stage or 0),
+                                                      (f"S{r.stage}", "#8D949E"))
+                mom_col = "#3DD68C" if (r.momentum_6m or 0) >= 0 else "#F1495F"
+                sector_es = _SECTOR_ES_SCAN.get(r.sector, r.sector or "—")
+                mktcap = _fmt_grande(r.market_cap) if r.market_cap else "—"
+                d = spark.get(r.ticker, {})
+                chg = d.get("change_pct", 0) or 0
+                chg_col = "#3DD68C" if chg >= 0 else "#F1495F"
+                spark_html = _sparkline_svg(d.get("closes"), chg >= 0, w=260, h=34)
+                if not d.get("closes"):
+                    # Sin intradía (del 25º en adelante): barra de momentum 6M
+                    _w = max(4, min(abs(r.momentum_6m or 0), 60)) / 60 * 100
+                    spark_html = (f'<div class="scan-mom-bar"><span style="width:{_w:.0f}%;'
+                                  f'background:{mom_col};"></span></div>')
+                # Proximidad al máximo anual: dot del meter en 100 + pct (−7% → 93%)
+                prox = max(0.0, min(100.0, 100.0 + (r.pct_from_52w_high or -100)))
+                _glow = {"#3DD68C": "61,214,140", "#E2B25C": "226,178,92",
+                         "#F1495F": "241,73,95"}.get(color, "226,178,92")
+                tk_safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in r.ticker)
+                with st.container(key=f"scres_{tk_safe}"):
+                    st.markdown(
+                        f'<div class="scan-res-head">'
+                        f'<span class="scan-res-ticker">{r.ticker}</span>'
+                        f'<span class="scan-res-name">{(r.name or "")[:34]}</span>'
+                        f'<span class="scan-res-score" style="color:{color};border-color:{color};">'
+                        f'{r.screener_score:.0f}<span class="scan-res-score-max">/100</span></span>'
+                        f'</div>'
+                        f'<div class="scan-res-priceline">'
+                        f'<span class="scan-res-price">${r.price:,.2f}</span>'
+                        f'<span class="scan-res-chg" style="color:{chg_col};">'
+                        f'{"▲" if chg >= 0 else "▼"} {abs(chg):.2f}%</span>'
+                        f'</div>'
+                        f'{spark_html}'
+                        f'<div class="scan-res-chips">'
+                        f'<span class="scan-res-chip" style="color:{stage_col};border-color:{stage_col}44;">{stage_txt}</span>'
+                        f'<span class="scan-res-chip">RS {r.rs_score:.0f}</span>'
+                        f'<span class="scan-res-chip" style="color:{mom_col};">'
+                        f'{"+" if (r.momentum_6m or 0) >= 0 else ""}{r.momentum_6m:.1f}% 6M</span>'
+                        f'<span class="scan-res-chip">{mktcap}</span>'
+                        f'<span class="scan-res-chip scan-res-chip--sector">{sector_es}</span>'
+                        f'</div>'
+                        f'<div class="scan-res-proxlbl">Distancia al máximo anual · '
+                        f'{r.pct_from_52w_high:.0f}%</div>'
+                        f'<div class="meter"><span class="meter-dot" style="left:{prox:.0f}%;'
+                        f'background:{color};box-shadow:0 0 0 3px rgba({_glow},0.18),'
+                        f'0 0 8px rgba({_glow},0.45);"></span></div>',
+                        unsafe_allow_html=True)
+                    if st.button("◈  Análisis DLP", key=f"scan_analyze_{r.ticker}",
+                                 use_container_width=True):
+                        run_analysis(r.ticker)
 
-        mktcap = f"${result.market_cap / 1e9:.1f}B" if result.market_cap > 0 else "N/A"
-
-        row_html = f"""<div style="display:grid;grid-template-columns:{" ".join([f'{w}fr' for w in col_widths])};gap:8px;padding:8px 8px;border-bottom:1px solid #232830;align-items:center;">
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;font-weight:700;color:#C9CDD3;">{result.ticker}</div>
-            <div style="font-size:0.78rem;color:#C9CDD3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{result.name[:25]}</div>
-            <div style="font-size:0.75rem;color:#8D949E;">{result.sector[:18]}</div>
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;color:#C9CDD3;">${result.price:.2f}</div>
-            <div style="font-size:0.8rem;color:#8D949E;">{mktcap}</div>
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;font-weight:700;color:{stage_color};">S{result.stage}</div>
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;color:#9D8CE0;">{result.rs_score:.0f}</div>
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;color:{mom_color};">{'+' if result.momentum_6m > 0 else ''}{result.momentum_6m:.1f}%</div>
-            <div style="font-family:JetBrains Mono;font-size:0.85rem;color:{mom3_color};">{'+' if result.momentum_3m > 0 else ''}{result.momentum_3m:.1f}%</div>
-            <div style="font-family:JetBrains Mono;font-size:0.9rem;font-weight:700;color:{color};">{result.screener_score:.0f}</div>
-        </div>"""
-        st.markdown(row_html, unsafe_allow_html=True)
-
-        # Botón de análisis (fuera del HTML para funcionar con Streamlit)
-        if st.button(f"Analizar {result.ticker}", key=f"scan_analyze_{result.ticker}"):
-            run_analysis(result.ticker)
+    # Aterrizaje del radar: un escaneo recién terminado hereda el scroll del
+    # config a media página (el scroll vive en section.stMain, no en window,
+    # así que window.scrollTo no basta). Iframe 0-alto AL FINAL — no crea
+    # hueco arriba — que sube la vista al tope una sola vez; reordenar o
+    # volver desde un análisis no re-dispara (el flag es one-shot).
+    if st.session_state.pop("_radar_scroll_top", False):
+        components.html("""
+        <script>
+        (function(){
+            const d = (window.parent && window.parent.document) || document;
+            const m = d.querySelector('section[data-testid="stMain"]')
+                   || d.querySelector('[data-testid="stAppViewContainer"]');
+            if (m) m.scrollTo({top: 0, left: 0, behavior: "instant"});
+            try { window.parent.scrollTo(0, 0); } catch(e) {}
+        })();
+        </script>""", height=0)
 
 
 # ── Scanner Config Page ──────────────────────────────────────────────────
@@ -3549,42 +3820,12 @@ SCANNER_ACCENTS = {
 }
 
 
-def _scanner_pill(label: str, key: str, active: bool, sub: str = "") -> bool:
-    """Renderiza un pill button uniforme. type='primary' si activo (naranja brand)."""
-    btn_type = "primary" if active else "secondary"
-    return st.button(label, key=key, type=btn_type, use_container_width=True,
-                     help=sub if sub else None)
-
-
-def _scanner_card_open(icon: str, title: str, subtitle: str, accent: str, tooltip: str = ""):
-    """Abre una card de scanner con accent color, icon container y header.
-    Devuelve un placeholder en el que el caller pondrá los pills."""
-    help_html = f'<span class="scanner-help" data-tooltip="{tooltip}">?</span>' if tooltip else ''
-    st.markdown(f"""
-    <div class="scanner-card" style="--accent: {accent};">
-        <div class="scanner-card-head">
-            <div class="scanner-card-icon-box">
-                <span class="scanner-card-icon-emoji">{icon}</span>
-            </div>
-            <div class="scanner-card-titles">
-                <div class="scanner-card-title">{title}</div>
-                <div class="scanner-card-subtitle">{subtitle}</div>
-            </div>
-            {help_html}
-        </div>
-        <div class="scanner-card-body">
-    """, unsafe_allow_html=True)
-
-
-def _scanner_card_close():
-    st.markdown('</div></div>', unsafe_allow_html=True)
-
-
 def _scanner_group_head(step: str, title: str, subtitle: str):
     """Encabezado de un bloque de criterios del scanner (agrupa varias cards
     bajo una misma idea: qué buscar / cómo se comporta / qué ver)."""
     st.markdown(f"""
-    <div class="scanner-group-head">
+    <div class="scanner-group-head scanner-group-head--centrada">
+        <span class="scanner-group-rule"></span>
         <span class="scanner-group-step">{step}</span>
         <div class="scanner-group-titles">
             <div class="scanner-group-title">{title}</div>
@@ -3595,9 +3836,58 @@ def _scanner_group_head(step: str, title: str, subtitle: str):
     """, unsafe_allow_html=True)
 
 
+def _fila_scanner(clave, icono, titulo, tooltip, opciones, es_activa, al_pulsar,
+                  extras=None, por_fila=None):
+    """UNA fila de filtro a todo lo ancho: cabecera fija (icono + título + '?')
+    a la izquierda y las píldoras LLENANDO el ancho restante — 4 opciones =
+    4 botones a lo ancho; 5 = 5 a lo ancho. Con `por_fila` (sectores) las
+    opciones se trocean en líneas de máximo N y CADA línea llena el ancho
+    (5/5/3). Ningún botón se parte jamás en dos líneas.
+
+    SIN tooltips en las píldoras (help=): el popup nativo seguía al ratón y
+    BLOQUEABA el clic. La explicación vive solo en el «?» de la cabecera
+    (tooltip CSS propio, no bloquea).
+
+    opciones: [(etiqueta, key_opcion, _)] · extras: [(etiqueta, callback)]."""
+    with st.container(key=f"scfila_{clave}"):
+        c_head, c_rail = st.columns([2.0, 8.0], gap="small")
+        with c_head:
+            help_html = (f'<span class="scanner-help" data-tooltip="{tooltip}">?</span>'
+                         if tooltip else "")
+            st.markdown(
+                f'<div class="scfila-head"><span class="scfila-icon">{icono}</span>'
+                f'<span class="scfila-title">{titulo}</span>{help_html}</div>',
+                unsafe_allow_html=True)
+        with c_rail:
+            with st.container(key=f"scrail_{clave}"):
+                todas = list(opciones) + [(lbl, f"__extra_{i}", "")
+                                          for i, (lbl, _) in enumerate(extras or [])]
+                paso = por_fila or len(todas)
+                for ini in range(0, len(todas), paso):
+                    bloque = todas[ini:ini + paso]
+                    cols = st.columns(len(bloque), gap="small")
+                    for col, (lbl, okey, _sub) in zip(cols, bloque):
+                        with col:
+                            if str(okey).startswith("__extra_"):
+                                idx = int(str(okey).split("_")[-1])
+                                if st.button(lbl, key=f"sc_{clave}_x{idx}",
+                                             use_container_width=True):
+                                    extras[idx][1]()
+                                    st.rerun()
+                            else:
+                                act = es_activa(okey)
+                                if st.button(lbl, key=f"sc_{clave}_{okey}",
+                                             type="primary" if act else "secondary",
+                                             use_container_width=True):
+                                    al_pulsar(okey)
+                                    st.rerun()
+
+
 def render_scanner_config():
-    """Página de configuración del scanner — filtros amigables que se mapean
-    a parámetros técnicos del ScreenerAgent."""
+    """Página de configuración del scanner — cada filtro es UNA fila a todo lo
+    ancho con su carril de píldoras de una sola línea. Optimizada para el
+    iframe de Whop: nada se apila, nada se parte, todo se lee de un vistazo.
+    La LÓGICA de estado y el mapeo a filtros técnicos son los mismos de antes."""
     from config.settings import SCANNER_DEFAULTS
     from dashboard.scanner_filters import (
         SIZE_OPTIONS, STAGE_OPTIONS, RS_OPTIONS, MOMENTUM_OPTIONS,
@@ -3605,278 +3895,120 @@ def render_scanner_config():
         build_screener_filters,
     )
 
-    # Asegurar que el state tenga estructura completa
     if not isinstance(st.session_state.get("scanner_filters"), dict):
         st.session_state.scanner_filters = dict(SCANNER_DEFAULTS)
     for k, v in SCANNER_DEFAULTS.items():
         if k not in st.session_state.scanner_filters:
             st.session_state.scanner_filters[k] = v
-
     sf = st.session_state.scanner_filters
 
-    # ── Hero ──
+    # ── Hero compacto (alto pensado para el embed) ──
     st.markdown("""
-    <div class="scanner-hero">
+    <div class="scanner-hero scanner-hero--compacto">
         <div class="scanner-hero-eyebrow">◇ Búsqueda personalizada</div>
         <div class="scanner-hero-title">Encuentra las mejores acciones</div>
-        <div class="scanner-hero-sub">
-            Configura los criterios que coinciden con tu estilo. Cada filtro está pensado
-            para que sea fácil de entender — el término técnico está abajo del título por si
-            quieres profundizar.
-        </div>
+        <div class="scanner-hero-sub">Cada criterio es una fila: elige tus píldoras y ejecuta.
+        El «?» de cada fila explica el término técnico.</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Top bar: Volver (izq) ─ espacio ─ Restablecer (der), simétricos ──
-    col_back, _spacer_top, col_reset = st.columns([2, 7, 2])
-    with col_back:
-        if st.button("← Volver al inicio", key="scanner_back_top", use_container_width=True):
+    col_home, _sp, col_reset = st.columns([2.2, 5.8, 2])
+    with col_home:
+        if st.button("⌂  Volver al Inicio", key="topnav_home_btn",
+                     use_container_width=True):
             st.session_state.scanner_config_open = False
             st.rerun()
     with col_reset:
-        if st.button("↻ Restablecer", key="scanner_reset_top",
-                     use_container_width=True,
-                     help="Volver a los filtros por defecto"):
-            st.session_state.scanner_filters = dict(SCANNER_DEFAULTS)
-            st.rerun()
-
-    st.markdown('<div class="scanner-section-divider"></div>', unsafe_allow_html=True)
-
-    # ════════════════════════════════════════════════════════════════════
-    # BLOQUE 1 — QUÉ EMPRESAS BUSCAR (universo de partida)
-    #   Sectores (tarjetón principal) + Tamaño + Liquidez
-    # ════════════════════════════════════════════════════════════════════
-    _scanner_group_head(
-        "1", "Qué empresas buscar",
-        "El universo de partida: en qué sectores, de qué tamaño y con cuánto movimiento diario",
-    )
-
-    # ════════════════════════════════════════════════════════════════════
-    # FILTRO PRINCIPAL: Sectores de interés (tarjetón full-width)
-    # st.container(border=True) crea un wrapper que envuelve TODO el contenido
-    # (header + toggles + pills) como una sola tarjeta visual. El anchor invisible
-    # nos permite estilarla vía CSS :has() sin afectar otros containers.
-    # ════════════════════════════════════════════════════════════════════
-    with st.container(border=True):
-        st.markdown('<div class="scanner-pri-anchor"></div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="scanner-pri-header">
-            <span class="scanner-pri-icon">🏭</span>
-            <div class="scanner-pri-titles">
-                <div class="scanner-pri-title">Sectores de interés</div>
-                <div class="scanner-pri-subtitle">Elige uno o varios — sin selección = todos los sectores</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Toggles "Todos / Ninguno"
-        tog_a, tog_b, _spacer = st.columns([1, 1, 6])
-        with tog_a:
-            if st.button("✓ Todos", key="sec_all_top", use_container_width=True):
-                sf["sectors"] = [opt["key"] for opt in SECTOR_OPTIONS]
-                st.rerun()
-        with tog_b:
-            if st.button("✕ Ninguno", key="sec_none_top", use_container_width=True):
-                sf["sectors"] = []
+        with st.container(key="scnav_reset"):
+            if st.button("↻ Restablecer", key="scanner_reset_top"):
+                st.session_state.scanner_filters = dict(SCANNER_DEFAULTS)
                 st.rerun()
 
-        # Grid de sectores con iconos — 4 columnas (full-width tiene espacio sobrado)
-        sec_per_row_top = 4
-        for row_start in range(0, len(SECTOR_OPTIONS), sec_per_row_top):
-            row_opts = SECTOR_OPTIONS[row_start:row_start + sec_per_row_top]
-            row_cols = st.columns(sec_per_row_top)
-            for i, opt in enumerate(row_opts):
-                with row_cols[i]:
-                    active = opt["key"] in (sf.get("sectors") or [])
-                    btn_type = "primary" if active else "secondary"
-                    icon = opt.get("icon", "")
-                    label = f"{icon}  {opt['label']}" if icon else opt["label"]
-                    if st.button(label, key=f"sec_top_{opt['key']}", type=btn_type,
-                                 use_container_width=True):
-                        current = list(sf.get("sectors") or [])
-                        if active:
-                            current = [x for x in current if x != opt["key"]]
-                        else:
-                            current.append(opt["key"])
-                        sf["sectors"] = current
-                        st.rerun()
+    # ── Helpers de estado (idénticos en semántica a la versión anterior) ──
+    def _multi(campo):
+        def activa(k):
+            return k in (sf.get(campo) or [])
+        def pulsar(k):
+            actual = list(sf.get(campo) or [])
+            sf[campo] = ([x for x in actual if x != k] if k in actual else actual + [k])
+        return activa, pulsar
 
-    # ── Bloque 1, fila de apoyo: Tamaño | Liquidez ──
-    # Cada fila abre sus PROPIAS columnas para que ambas tarjetas queden
-    # perfectamente alineadas entre sí (con dos columnas largas se desfasaban).
-    b1_l, b1_r = st.columns(2, gap="medium")
+    def _single(campo):
+        return (lambda k: sf.get(campo) == k), (lambda k: sf.__setitem__(campo, k))
 
-    # Tamaño de la empresa (multi-select) — IZQ
-    with b1_l:
-        _scanner_card_open(
-            "🏢", "Tamaño de la empresa", "Capitalización de mercado",
-            SCANNER_ACCENTS["size"],
-            tooltip="Filtra por el tamaño total de la empresa según su valor en bolsa. Las megacaps son las más estables; las micro caps tienen más volatilidad pero más potencial."
-        )
-        size_cols = st.columns(len(SIZE_OPTIONS))
-        for i, opt in enumerate(SIZE_OPTIONS):
-            with size_cols[i]:
-                active = opt["key"] in (sf.get("size_buckets") or [])
-                if _scanner_pill(opt["label"], f"size_{opt['key']}", active, sub=opt["sub"]):
-                    current = list(sf.get("size_buckets") or [])
-                    if active:
-                        current = [x for x in current if x != opt["key"]]
-                    else:
-                        current.append(opt["key"])
-                    sf["size_buckets"] = current
-                    st.rerun()
-        _scanner_card_close()
+    # ════════ 1 · QUÉ EMPRESAS BUSCAR ════════
+    _scanner_group_head("1", "Qué empresas buscar",
+                        "El universo de partida: sectores, tamaño y liquidez")
 
-    # Liquidez mínima (single) — DER
-    with b1_r:
-        _scanner_card_open(
-            "💧", "Liquidez mínima", "Volumen promedio diario",
-            SCANNER_ACCENTS["liquidity"],
-            tooltip="Cuántas acciones se negocian al día en promedio. Alta liquidez = más fácil entrar y salir sin afectar el precio."
-        )
-        liq_cols = st.columns(len(LIQUIDITY_OPTIONS))
-        for i, opt in enumerate(LIQUIDITY_OPTIONS):
-            with liq_cols[i]:
-                active = sf.get("liquidity") == opt["key"]
-                if _scanner_pill(opt["label"], f"liq_{opt['key']}", active, sub=opt["sub"]):
-                    sf["liquidity"] = opt["key"]
-                    st.rerun()
-        _scanner_card_close()
+    a, p = _multi("sectors")
+    _fila_scanner(
+        "sectores", "🏭", "Sectores",
+        "Elige uno o varios — sin selección = todos los sectores.",
+        # Sin emoji por píldora: las demás filas no lo llevan y el ancho que
+        # roban (~26px × 5 por línea) es justo lo que corta el carril a 1400.
+        [(o["label"], o["key"], "") for o in SECTOR_OPTIONS],
+        a, p,
+        extras=[("✓ Todos", lambda: sf.__setitem__("sectors", [o["key"] for o in SECTOR_OPTIONS])),
+                ("✕ Ninguno", lambda: sf.__setitem__("sectors", []))],
+        por_fila=5)
 
-    # ════════════════════════════════════════════════════════════════════
-    # BLOQUE 2 — CÓMO SE ESTÁ COMPORTANDO (lectura del precio)
-    #   Tendencia + Fortaleza relativa + Momentum + Cercanía al máximo
-    # ════════════════════════════════════════════════════════════════════
-    _scanner_group_head(
-        "2", "Cómo se está comportando",
-        "La lectura del precio: en qué fase está, si lidera al mercado y cuánta inercia lleva",
-    )
+    a, p = _multi("size_buckets")
+    _fila_scanner("tamano", "🏢", "Tamaño",
+                  "Capitalización de mercado. Megacaps = más estables; micro = más volátiles.",
+                  [(f"{o['label']} · {o['sub']}", o["key"], "") for o in SIZE_OPTIONS], a, p)
 
-    # ── Bloque 2, fila 1: Tendencia | Fortaleza vs el mercado ──
-    b2_l, b2_r = st.columns(2, gap="medium")
+    a, p = _single("liquidity")
+    _fila_scanner("liquidez", "💧", "Liquidez",
+                  "Volumen medio diario: cuánto se negocia. Alta = entrar y salir sin mover el precio.",
+                  [(f"{o['label']} · {o['sub'].replace('Volumen ', '')}", o["key"], "") for o in LIQUIDITY_OPTIONS], a, p)
 
-    # Tendencia técnica (multi-select) — IZQ
-    with b2_l:
-        _scanner_card_open(
-            "📈", "Tendencia técnica", "Stage Analysis (Minervini)",
-            SCANNER_ACCENTS["stage"],
-            tooltip="Identifica en qué fase del ciclo está la acción. Stage 2 es la fase alcista ideal; Stage 1 es base de acumulación; Stage 3 y 4 son distribución y caída."
-        )
-        stage_cols = st.columns(len(STAGE_OPTIONS))
-        for i, opt in enumerate(STAGE_OPTIONS):
-            with stage_cols[i]:
-                active = opt["key"] in (sf.get("stages") or [])
-                if _scanner_pill(opt["label"], f"stage_{opt['key']}", active, sub=opt["sub"]):
-                    current = list(sf.get("stages") or [])
-                    if active:
-                        current = [x for x in current if x != opt["key"]]
-                    else:
-                        current.append(opt["key"])
-                    sf["stages"] = current
-                    st.rerun()
-        _scanner_card_close()
+    # ════════ 2 · CÓMO SE ESTÁ COMPORTANDO ════════
+    _scanner_group_head("2", "Cómo se está comportando",
+                        "La lectura del precio: fase, liderazgo e inercia")
 
-    # Fortaleza vs el mercado (single) — DER
-    with b2_r:
-        _scanner_card_open(
-            "💪", "Fortaleza vs el mercado", "Relative Strength vs S&P 500",
-            SCANNER_ACCENTS["rs"],
-            tooltip="Mide qué tan mejor o peor se ha comportado la acción comparada con el S&P 500. RS alto = la acción está liderando el mercado."
-        )
-        rs_cols = st.columns(len(RS_OPTIONS))
-        for i, opt in enumerate(RS_OPTIONS):
-            with rs_cols[i]:
-                active = sf.get("rs_strength") == opt["key"]
-                if _scanner_pill(opt["label"], f"rs_{opt['key']}", active, sub=opt["sub"]):
-                    sf["rs_strength"] = opt["key"]
-                    st.rerun()
-        _scanner_card_close()
+    a, p = _multi("stages")
+    _fila_scanner("tendencia", "📈", "Tendencia",
+                  "Fase del ciclo según la metodología de fases de Minervini. La fase 2 (alcista confirmada) es la ideal.",
+                  [(o["label"], o["key"], o["sub"]) for o in STAGE_OPTIONS], a, p)
 
-    # ── Bloque 2, fila 2: Momentum | Cercanía al máximo ──
-    b2b_l, b2b_r = st.columns(2, gap="medium")
+    a, p = _single("rs_strength")
+    _fila_scanner("fortaleza", "💪", "Fortaleza",
+                  "Fuerza relativa frente al S&P 500. Alta = la acción lidera al mercado.",
+                  [(o["label"], o["key"], o["sub"]) for o in RS_OPTIONS], a, p)
 
-    # Momentum reciente (single) — IZQ
-    with b2b_l:
-        _scanner_card_open(
-            "🚀", "Momentum reciente", "Retorno últimos 6 meses",
-            SCANNER_ACCENTS["momentum"],
-            tooltip="Cómo se ha movido la acción en los últimos 6 meses. Aceleración indica un movimiento alcista fuerte y sostenido."
-        )
-        mom_cols = st.columns(len(MOMENTUM_OPTIONS))
-        for i, opt in enumerate(MOMENTUM_OPTIONS):
-            with mom_cols[i]:
-                active = sf.get("momentum_6m") == opt["key"]
-                if _scanner_pill(opt["label"], f"mom_{opt['key']}", active, sub=opt["sub"]):
-                    sf["momentum_6m"] = opt["key"]
-                    st.rerun()
-        _scanner_card_close()
+    a, p = _single("momentum_6m")
+    _fila_scanner("momentum", "🚀", "Momentum",
+                  "Retorno de los últimos 6 meses: cuánta inercia lleva el precio.",
+                  [(o["label"], o["key"], o["sub"]) for o in MOMENTUM_OPTIONS], a, p)
 
-    # Cercanía al máximo anual (single) — DER
-    with b2b_r:
-        _scanner_card_open(
-            "🏔️", "Cercanía al máximo anual", "Distancia al 52W High",
-            SCANNER_ACCENTS["proximity"],
-            tooltip="Qué tan cerca está la acción de su precio más alto de los últimos 12 meses. Cerca del máximo suele indicar fortaleza; lejos puede ser oportunidad o caída."
-        )
-        prox_cols = st.columns(len(PROXIMITY_OPTIONS))
-        for i, opt in enumerate(PROXIMITY_OPTIONS):
-            with prox_cols[i]:
-                active = sf.get("proximity_high") == opt["key"]
-                if _scanner_pill(opt["label"], f"prox_{opt['key']}", active, sub=opt["sub"]):
-                    sf["proximity_high"] = opt["key"]
-                    st.rerun()
-        _scanner_card_close()
+    a, p = _single("proximity_high")
+    _fila_scanner("maximo", "🏔️", "Vs. máximo anual",
+                  "Distancia al precio más alto de 12 meses. Cerca = fortaleza; lejos = castigo u oportunidad.",
+                  [(o["label"], o["key"], o["sub"]) for o in PROXIMITY_OPTIONS], a, p)
 
-    # NOTE: Sectores está arriba, en el bloque 1 (tarjetón full-width).
-    #       Liquidez está arriba, junto a Tamaño (ambos definen el universo).
+    # ════════ 3 · QUÉ QUIERES VER ════════
+    _scanner_group_head("3", "Qué quieres ver",
+                        "Cuántos resultados, ordenados de mejor a peor puntaje")
 
-    # ════════════════════════════════════════════════════════════════════
-    # BLOQUE 3 — QUÉ QUIERES VER (ajuste de salida)
-    # ════════════════════════════════════════════════════════════════════
-    _scanner_group_head(
-        "3", "Qué quieres ver",
-        "Cuántas acciones mostrar al final, ordenadas de mejor a peor puntaje",
-    )
+    a, p = _single("max_results")
+    _fila_scanner("resultados", "📋", "Resultados",
+                  "Cuántas acciones ver al final. 20 es suficiente para revisar a fondo.",
+                  [(o["label"], o["key"], o["sub"]) for o in MAX_RESULTS_OPTIONS], a, p)
 
-    # Cantidad de resultados (single) — centrada, media anchura
-    _sp_res_l, res_col, _sp_res_r = st.columns([1, 2, 1], gap="medium")
-    with res_col:
-        _scanner_card_open(
-            "📋", "Cantidad de resultados", "Top N por puntaje del screener",
-            SCANNER_ACCENTS["results"],
-            tooltip="Cuántas acciones ver al final. Más resultados = más opciones pero más ruido. 20 es suficiente para revisar a fondo."
-        )
-        mr_cols = st.columns(len(MAX_RESULTS_OPTIONS))
-        for i, opt in enumerate(MAX_RESULTS_OPTIONS):
-            with mr_cols[i]:
-                active = sf.get("max_results") == opt["key"]
-                if _scanner_pill(opt["label"], f"mr_{opt['key']}", active, sub=opt["sub"]):
-                    sf["max_results"] = opt["key"]
-                    st.rerun()
-        _scanner_card_close()
-
-    # ── Barra de acción inferior — Ejecutar centrado con halo dorado + Volver ──
+    # ── Ejecutar (halo dorado) + Volver ──
     st.markdown('<div class="scanner-section-divider"></div>', unsafe_allow_html=True)
-
-    # 1) Botón principal "Ejecutar búsqueda" centrado con halo dorado giratorio.
-    #    Usamos st.container() + anchor invisible para envolverlo y aplicarle
-    #    el efecto vía CSS :has(). El anchor es invisible (display:none).
-    _spacer_l1, run_col, _spacer_r1 = st.columns([1, 2, 1])
+    _sl, run_col, _sr = st.columns([1, 2, 1])
     with run_col:
         with st.container():
-            st.markdown('<div class="ejecutar-glow-anchor"></div>',
-                        unsafe_allow_html=True)
+            st.markdown('<div class="ejecutar-glow-anchor"></div>', unsafe_allow_html=True)
             if st.button("🚀 Ejecutar búsqueda", key="scanner_run",
                          use_container_width=True, type="primary"):
                 tech_filters = build_screener_filters(sf)
                 st.session_state.scanner_config_open = False
                 run_market_scan(filters=tech_filters)
-
-    # 2) Botón secundario "Volver" centrado debajo, más estrecho, simétrico.
-    _spacer_l2, back_col, _spacer_r2 = st.columns([1.5, 1, 1.5])
+    _bl, back_col, _br = st.columns([1.5, 1, 1.5])
     with back_col:
-        if st.button("← Volver", key="scanner_back_bottom",
-                     use_container_width=True):
+        if st.button("← Volver", key="scanner_back_bottom", use_container_width=True):
             st.session_state.scanner_config_open = False
             st.rerun()
 
@@ -4118,6 +4250,15 @@ def render_quick_view(ticker: str):
 # ── Welcome / Central Hub ─────────────────────────────────────────────────
 POPULAR_TICKERS = ["NVDA", "AAPL", "MSFT", "TSLA", "GOOGL", "META", "AMZN", "AMD", "AVGO", "NFLX", "COIN", "PLTR"]
 
+# Universos del inicio por tipo de activo (pestañas ETF | ACCIONES | CRIPTO).
+# Cada entrada es (símbolo_visible, ticker_de_datos): en acciones y ETFs
+# coinciden; en cripto el dato viene del par de Yahoo (BTC → BTC-USD).
+POPULAR_ETFS = ["SPY", "QQQ", "VOO", "SCHD", "IWM", "GLD", "VTI", "XLK", "XLE", "ARKK"]
+POPULAR_CRYPTOS = [("BTC", "BTC-USD"), ("ETH", "ETH-USD"), ("SOL", "SOL-USD"),
+                   ("XRP", "XRP-USD"), ("BNB", "BNB-USD"), ("DOGE", "DOGE-USD"),
+                   ("ADA", "ADA-USD"), ("LINK", "LINK-USD"), ("AVAX", "AVAX-USD"),
+                   ("LTC", "LTC-USD")]
+
 
 def _sparkline_svg(closes, positive, w=56, h=18):
     """Mini-sparkline SVG puro (sin Plotly, ~300 bytes) con los cierres de los
@@ -4149,12 +4290,702 @@ def _sparkline_svg(closes, positive, w=56, h=18):
         return ""
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  RENDERS DE ETF Y CRIPTO — secciones propias, componentes reutilizados
+# ══════════════════════════════════════════════════════════════════════════
+
+_SECTORES_ES = {
+    "technology": "Tecnología", "financial_services": "Finanzas",
+    "healthcare": "Salud", "consumer_cyclical": "Consumo cíclico",
+    "consumer_defensive": "Consumo defensivo", "communication_services": "Comunicación",
+    "industrials": "Industria", "energy": "Energía", "utilities": "Utilities",
+    "realestate": "Inmobiliario", "basic_materials": "Materiales",
+}
+
+
+def _fmt_grande(v, prefijo="$"):
+    """1234567890 → $1.2B. NUNCA lanza."""
+    try:
+        v = float(v)
+        if v != v:
+            return "—"
+        if v >= 1e12:
+            return f"{prefijo}{v/1e12:.2f}T"
+        if v >= 1e9:
+            return f"{prefijo}{v/1e9:.1f}B"
+        if v >= 1e6:
+            return f"{prefijo}{v/1e6:.0f}M"
+        return f"{prefijo}{v:,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _v_or(v, fmt="{:.2f}", sufijo="", default="—"):
+    try:
+        f = float(v)
+        if f != f:
+            return default
+        return fmt.format(f) + sufijo
+    except (TypeError, ValueError):
+        return default
+
+
+def _calificaciones_horizonte(analysis: StockAnalysis) -> list:
+    """Calificación 0-100 por horizonte temporal, derivada de las secciones que
+    de verdad pesan en cada plazo. Es la respuesta directa a '¿me interesa hoy,
+    en unos meses, o como posición de años?'. Los huecos se excluyen y el resto
+    reparte su peso (misma filosofía _pond). NUNCA lanza."""
+    try:
+        b = analysis.score_breakdown or {}
+
+        def _g(k):
+            v = b.get(k)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        def _mezcla(pares):
+            num = sum(v * w for v, w in pares if v is not None)
+            den = sum(w for v, w in pares if v is not None)
+            return round(num / den, 1) if den > 0 else None
+
+        if analysis.asset_type == "crypto":
+            tec, sent = _g("technical"), _g("crypto_sentimiento")
+            tok, adop, rie = _g("crypto_tokenomics"), _g("crypto_adopcion"), _g("crypto_riesgo")
+            filas = [
+                ("Corto plazo · semanas", _mezcla([(tec, 0.7), (sent, 0.3)])),
+                ("Medio plazo · meses", _mezcla([(tec, 0.3), (sent, 0.3), (rie, 0.4)])),
+                ("Largo plazo · años", _mezcla([(tok, 0.5), (adop, 0.5)])),
+            ]
+        else:  # etf
+            per, com = _g("etf_perfil"), _g("etf_composicion")
+            ren, tec = _g("etf_rendimiento"), _g("technical")
+            filas = [
+                ("Corto plazo · semanas", _mezcla([(tec, 1.0)])),
+                ("Medio plazo · meses", _mezcla([(ren, 0.5), (tec, 0.5)])),
+                ("Largo plazo · años", _mezcla([(per, 0.35), (com, 0.25), (ren, 0.4)])),
+            ]
+        return [(n, v) for n, v in filas if v is not None]
+    except Exception:
+        return []
+
+
+def _render_overview_activo(analysis: StockAnalysis, etiquetas: dict,
+                            con_graficas: bool = False):
+    """Overview compartido de ETF/cripto: score + desglose por sección + tesis
+    + fortalezas/riesgos. Con `con_graficas=True` el número plano se sustituye
+    por el gauge de la app + la calificación por horizonte temporal (corto,
+    medio y largo plazo) — lo que un inversor quiere saber de un vistazo."""
+    score = analysis.composite_score
+    color = score_color(score)
+    if con_graficas:
+        c1, c2 = st.columns([1, 1.5], gap="small")
+        with c1:
+            try:
+                fig = build_gauge(score, analysis.recommendation)
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_ov_gauge_{analysis.ticker}")
+            except Exception:
+                st.markdown(
+                    f'<div style="text-align:center;font-family:JetBrains Mono;'
+                    f'font-size:3rem;color:{color};">{score:.1f}</div>',
+                    unsafe_allow_html=True)
+        with c2:
+            try:
+                filas = _calificaciones_horizonte(analysis)
+                if filas:
+                    # Altura EXACTA del gauge de al lado (build_gauge = 360px):
+                    # barras 336 + pie 24 = 360 → las dos tarjetas del Overview
+                    # miden lo mismo y la fila queda cohesionada.
+                    fig = build_metric_bars(
+                        [(n, v, None) for n, v in filas],
+                        height=336, title="Calificación por horizonte temporal",
+                        color_by_score=True)
+                    _plotly(fig, use_container_width=True,
+                            config={"displayModeBar": False, "staticPlot": True},
+                            key=f"chart_ov_horizontes_{analysis.ticker}")
+                    st.markdown(
+                        '<div style="font-size:0.68rem;color:#5E6570;text-align:center;'
+                        'height:24px;line-height:24px;margin:-8px 0 0;">Cada horizonte pondera '
+                        'las secciones que de verdad pesan en ese plazo</div>',
+                        unsafe_allow_html=True)
+            except Exception:
+                pass
+    else:
+        st.markdown(
+            f'<div style="text-align:center;padding:22px 16px;background:#0F1419;'
+            f'border:1px solid #232830;border-radius:10px;border-top:3px solid {color};margin-bottom:14px;">'
+            f'<div style="font-size:0.72rem;color:#8D949E;text-transform:uppercase;'
+            f'letter-spacing:0.14em;">{analysis.company_name}</div>'
+            f'<div style="font-family:JetBrains Mono;font-size:3.4rem;font-weight:700;'
+            f'color:{color};line-height:1.15;">{score:.1f}</div>'
+            f'<div style="font-size:0.8rem;color:{color};font-weight:600;'
+            f'letter-spacing:0.08em;">{analysis.recommendation}</div>'
+            f'</div>', unsafe_allow_html=True)
+
+    # Desglose por sección (barras, mismo idioma que los sub-scores de Riesgo)
+    st.markdown('<div class="section-title-bar">Desglose por Sección</div>',
+                unsafe_allow_html=True)
+    for k, v in (analysis.score_breakdown or {}).items():
+        label = etiquetas.get(k, k.replace("_", " ").title())
+        try:
+            ancho = min(max(float(v), 0) / 100 * 100, 100)
+        except (TypeError, ValueError):
+            continue
+        c = score_color(v)
+        st.markdown(
+            f'<div style="margin:7px 0;">'
+            f'<div style="display:flex;justify-content:space-between;font-size:0.78rem;color:#C9CDD3;">'
+            f'<span>{label}</span><span style="font-family:JetBrains Mono;color:{c};">{v:.0f}</span></div>'
+            f'<div style="background:#232830;border-radius:3px;height:6px;margin-top:3px;">'
+            f'<div style="background:{c};width:{ancho}%;height:100%;border-radius:3px;"></div>'
+            f'</div></div>', unsafe_allow_html=True)
+
+    if analysis.investment_thesis:
+        st.markdown('<div class="section-title-bar">Tesis</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="analysis-card"><div class="analysis-text">{_no_latex(analysis.investment_thesis)}</div></div>',
+            unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('<div class="section-title-bar">Fortalezas</div>', unsafe_allow_html=True)
+        for s in (analysis.key_strengths or [])[:4]:
+            st.markdown(f'<div class="risk-item" style="border-left-color:#3DD68C;">{s}</div>',
+                        unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="section-title-bar">Riesgos</div>', unsafe_allow_html=True)
+        for s in (analysis.key_risks or [])[:4]:
+            st.markdown(f'<div class="risk-item">{s}</div>', unsafe_allow_html=True)
+
+
+def render_overview_etf(analysis: StockAnalysis):
+    _render_overview_activo(analysis, {
+        "etf_perfil": "Perfil y Costes", "etf_composicion": "Composición",
+        "etf_rendimiento": "Rendimiento y Riesgo", "technical": "Técnico"},
+        con_graficas=True)
+
+
+def render_overview_crypto(analysis: StockAnalysis):
+    _render_overview_activo(analysis, {
+        "crypto_tokenomics": "Tokenomics", "crypto_adopcion": "Adopción y Red",
+        "crypto_sentimiento": "Sentimiento", "technical": "Técnico",
+        "crypto_riesgo": "Riesgo"}, con_graficas=True)
+
+
+def render_etf_perfil(analysis: StockAnalysis):
+    report = analysis.reports.get("etf_perfil")
+    if report is None:
+        st.info("Perfil del ETF no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    ter = km.get("ter_pct")
+    _render_metric_tiles([
+        {"icon": "🏷️", "label": "TER (coste anual)",
+         "value": _v_or(ter, "{:.2f}", "%"),
+         "color": "#3DD68C" if isinstance(ter, (int, float)) and ter <= 0.2 else "#E2B25C",
+         "tooltip": "Total Expense Ratio: lo que el fondo te cobra al año, pase lo que pase con el mercado. Es de las pocas cosas garantizadas de un ETF."},
+        {"icon": "💎", "label": "Patrimonio (AUM)",
+         "value": _fmt_grande(km.get("aum")), "color": "#E2B25C",
+         "tooltip": "Activos bajo gestión. Por debajo de $100M existe riesgo real de cierre del fondo."},
+        {"icon": "📅", "label": "Antigüedad",
+         "value": _v_or(km.get("edad_anios"), "{:.0f}", " años"), "color": "#6FA3E0",
+         "tooltip": "Años cotizando. Un historial largo permite juzgar el comportamiento en ciclos completos."},
+        {"icon": "🏦", "label": "Gestora",
+         "value": (str(km.get("gestora") or "—").split()[0] if km.get("gestora") else "—"),
+         "color": "#C9CDD3",
+         "tooltip": str(km.get("gestora") or "Gestora del fondo")},
+        {"icon": "⚖️", "label": "Prima/Desc. NAV",
+         "value": _v_or(km.get("prima_descuento_pct"), "{:+.2f}", "%"),
+         "color": "#5E6570",
+         "tooltip": "Diferencia entre el precio de mercado y el valor liquidativo (NAV). Cerca de 0% = el precio refleja fielmente la cartera."},
+    ])
+    # ── Visual: el coste anual comparado con su categoría ────────────────
+    if km.get("ter_categoria_pct") is not None and ter is not None:
+        g1, g2 = st.columns([1.4, 1], gap="small")
+        with g1:
+            try:
+                fig = build_metric_bars(
+                    [(analysis.ticker, ter, "#3DD68C" if ter <= km["ter_categoria_pct"] else "#F1495F"),
+                     ("Media de su categoría", km["ter_categoria_pct"], "#5E6570")],
+                    height=170, title="Coste anual (TER) comparado", x_format="%")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_etf_ter_{analysis.ticker}")
+            except Exception:
+                pass
+        with g2:
+            _render_insight_card(
+                "Qué significa",
+                f"Este ETF cuesta un <strong>{ter:.2f}%</strong> anual frente al "
+                f"<strong>{km['ter_categoria_pct']:.2f}%</strong> medio de su categoría — "
+                f"{'una fracción de lo habitual: la ventaja se acumula año tras año' if ter < km['ter_categoria_pct'] * 0.5 else 'en línea con lo habitual' if ter <= km['ter_categoria_pct'] else 'por encima de lo habitual: exige justificarlo con algo que los baratos no den'}.",
+                color="#3DD68C" if ter <= km["ter_categoria_pct"] else "#E2B25C")
+    _render_pros_cons(report, pros_title="✅ A favor", cons_title="⚠️ En contra")
+    _render_analysis_card(report, title="Análisis del Perfil")
+
+
+def render_etf_composicion(analysis: StockAnalysis):
+    report = analysis.reports.get("etf_composicion")
+    if report is None:
+        st.info("Composición no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    _render_metric_tiles([
+        {"icon": "🎯", "label": "Concentración Top-10",
+         "value": _v_or(km.get("concentracion_top10_pct"), "{:.0f}", "%"),
+         "color": "#F1495F" if isinstance(km.get("concentracion_top10_pct"), (int, float)) and km["concentracion_top10_pct"] >= 50 else "#3DD68C",
+         "tooltip": "Peso conjunto de las 10 mayores posiciones. Alto = el fondo depende de pocas empresas."},
+        {"icon": "🏭", "label": "Sector Dominante",
+         "value": _SECTORES_ES.get(str(km.get("sector_dominante") or ""), str(km.get("sector_dominante") or "—")).split()[0],
+         "color": "#E2B25C",
+         "tooltip": "Sector con más peso en la cartera."},
+        {"icon": "📊", "label": "Peso del Dominante",
+         "value": _v_or(km.get("sector_dominante_pct"), "{:.0f}", "%"), "color": "#6FA3E0",
+         "tooltip": "Cuánto pesa el sector dominante sobre el total."},
+        {"icon": "🧩", "label": "Sectores >1%",
+         "value": _v_or(km.get("n_sectores"), "{:.0f}"), "color": "#C9CDD3",
+         "tooltip": "Número de sectores con presencia relevante. Más sectores = riesgo más repartido."},
+    ])
+    raw = report.raw_data or {}
+    holdings = raw.get("top_holdings") or []
+    sectores = raw.get("sectores") or {}
+    if holdings:
+        st.markdown('<div class="section-title-bar">Top 10 Posiciones</div>',
+                    unsafe_allow_html=True)
+        filas = "".join(
+            f"<tr><td>{h[0]}</td><td>{h[1]}</td>"
+            f"<td style='text-align:right;font-family:JetBrains Mono;'>{_v_or(h[2], '{:.2f}', '%')}</td></tr>"
+            for h in holdings[:10])
+        st.markdown(
+            '<div class="analysis-card" style="padding:12px 16px;">'
+            '<table style="width:100%;font-size:0.85rem;border-collapse:collapse;">'
+            '<thead><tr style="color:#8D949E;font-size:0.72rem;text-transform:uppercase;">'
+            '<th style="text-align:left;">Ticker</th><th style="text-align:left;">Empresa</th>'
+            '<th style="text-align:right;">Peso</th></tr></thead>'
+            f'<tbody>{filas}</tbody></table></div>', unsafe_allow_html=True)
+    if sectores:
+        st.markdown('<div class="section-title-bar">Distribución Sectorial</div>',
+                    unsafe_allow_html=True)
+        datos = [{"holder": _SECTORES_ES.get(k, k.replace("_", " ").title()), "pctHeld": v}
+                 for k, v in sectores.items() if isinstance(v, (int, float)) and v > 0]
+        if datos:
+            fig = build_holders_bars(datos)
+            _plotly(fig, use_container_width=True,
+                    config={"displayModeBar": False, "staticPlot": True},
+                    key=f"chart_etf_sectores_{analysis.ticker}")
+    _render_pros_cons(report, pros_title="✅ A favor", cons_title="⚠️ En contra")
+    _render_analysis_card(report, title="Análisis de la Composición")
+
+
+def render_etf_rendimiento(analysis: StockAnalysis):
+    report = analysis.reports.get("etf_rendimiento")
+    if report is None:
+        st.info("Rendimiento no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    _render_metric_tiles([
+        {"icon": "📈", "label": "Retorno 3a (anual)",
+         "value": _v_or(km.get("retorno_3y_pct"), "{:+.1f}", "%"),
+         "color": "#3DD68C" if isinstance(km.get("retorno_3y_pct"), (int, float)) and km["retorno_3y_pct"] > 8 else "#E2B25C",
+         "tooltip": "Retorno medio anualizado de los últimos 3 años."},
+        {"icon": "📉", "label": "Caída Máxima",
+         "value": _v_or(km.get("max_drawdown_pct"), "{:.1f}", "%"),
+         "color": "#F1495F" if isinstance(km.get("max_drawdown_pct"), (int, float)) and km["max_drawdown_pct"] <= -25 else "#E2B25C",
+         "tooltip": "El peor tramo del período analizado, de pico a valle. Es lo que habrías tenido que aguantar."},
+        {"icon": "🌡️", "label": "Volatilidad",
+         "value": _v_or(km.get("vol_anual_pct"), "{:.0f}", "%"), "color": "#6FA3E0",
+         "tooltip": "Volatilidad anualizada del último año."},
+        {"icon": "⚡", "label": "Sharpe aprox.",
+         "value": _v_or(km.get("sharpe"), "{:.2f}"),
+         "color": "#3DD68C" if isinstance(km.get("sharpe"), (int, float)) and km["sharpe"] > 0.7 else "#E2B25C",
+         "tooltip": "Retorno por unidad de riesgo (aproximado, sobre T-bill). >1 es excelente."},
+        {"icon": "💵", "label": "Yield",
+         "value": _v_or(km.get("yield_pct"), "{:.2f}", "%"), "color": "#5E6570",
+         "tooltip": "Rendimiento por dividendos del fondo en el último año. Solo informativo."},
+    ])
+    # ── Visual: retornos por plazo + la caída que hubo que aguantar ──────
+    g1, g2 = st.columns(2, gap="small")
+    with g1:
+        try:
+            items = []
+            for etiqueta, clave in [("1 año", "retorno_1y_pct"),
+                                    ("3 años (anual)", "retorno_3y_pct"),
+                                    ("5 años (anual)", "retorno_5y_pct")]:
+                v = km.get(clave)
+                if isinstance(v, (int, float)):
+                    items.append((etiqueta, v, "#3DD68C" if v >= 0 else "#F1495F"))
+            if len(items) >= 2:
+                fig = build_metric_bars(items, height=200,
+                                        title="Retorno por plazo", x_format="%")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_etf_retornos_{analysis.ticker}")
+        except Exception:
+            pass
+    with g2:
+        try:
+            from data.market_data import get_price_history
+            df = get_price_history(analysis.ticker, period="1y")
+            if df is not None and not df.empty and len(df) > 60:
+                import pandas as _pd
+                c = df["Close"].dropna()
+                dd = (c / c.cummax() - 1.0) * 100.0
+                _df = _pd.DataFrame({"Close": dd})
+                fig = build_mountain_chart(_df, "Caída desde máximos · 12 meses", height=200,
+                                           es_precio=False, prefijo_y="")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_etf_dd_{analysis.ticker}")
+        except Exception:
+            pass
+    _render_pros_cons(report, pros_title="✅ A favor", cons_title="⚠️ En contra")
+    _render_analysis_card(report, title="Análisis de Rendimiento y Riesgo")
+
+
+def render_crypto_tokenomics(analysis: StockAnalysis):
+    report = analysis.reports.get("crypto_tokenomics")
+    if report is None:
+        st.info("Tokenomics no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    emitido = km.get("pct_emitido")
+    _render_metric_tiles([
+        {"icon": "💎", "label": "Market Cap",
+         "value": _fmt_grande(km.get("market_cap")), "color": "#E2B25C",
+         "tooltip": "Capitalización total (precio × supply circulante)."},
+        {"icon": "🏆", "label": "Ranking",
+         "value": _v_or(km.get("rank"), "#{:.0f}"), "color": "#6FA3E0",
+         "tooltip": "Posición por capitalización dentro del mercado cripto."},
+        {"icon": "⛏️", "label": "Oferta Emitida",
+         "value": _v_or(emitido, "{:.1f}", "%") if emitido is not None else "Sin tope",
+         "color": "#3DD68C" if isinstance(emitido, (int, float)) and emitido >= 90 else "#E2B25C",
+         "tooltip": "Porcentaje de la oferta máxima ya en circulación. 'Sin tope' = la moneda no tiene límite de emisión."},
+        {"icon": "🗻", "label": "Dist. desde Máximos",
+         "value": _v_or(km.get("ath_distancia_pct"), "{:.0f}", "%"),
+         "color": "#F1495F" if isinstance(km.get("ath_distancia_pct"), (int, float)) and km["ath_distancia_pct"] <= -60 else "#E2B25C",
+         "tooltip": "Cuánto está por debajo de su máximo histórico."},
+        {"icon": "🌊", "label": "Rotación Diaria",
+         "value": _v_or(km.get("turnover_pct"), "{:.1f}", "%"), "color": "#5E6570",
+         "tooltip": "Volumen de 24h como % de la capitalización: liquidez real bajo el precio."},
+    ])
+    # ── Visual: estructura de oferta + posición en el ciclo ──────────────
+    g1, g2 = st.columns(2, gap="small")
+    with g1:
+        try:
+            if isinstance(emitido, (int, float)) and emitido > 0:
+                fig = build_metric_bars(
+                    [("Oferta emitida", emitido, "#3DD68C"),
+                     ("Por emitir", max(100.0 - emitido, 0.0), "#5E6570")],
+                    height=180, title="Estructura de oferta", x_format="%")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_tok_oferta_{analysis.ticker}")
+            else:
+                _render_insight_card(
+                    "Oferta sin tope",
+                    "Esta moneda no tiene un máximo de emisión: su oferta futura depende de "
+                    "las reglas del protocolo (emisión, quemas, recompensas), no de un límite fijo.",
+                    color="#E2B25C")
+        except Exception:
+            pass
+    with g2:
+        try:
+            # La ASIMETRÍA DE LAS PÉRDIDAS: caer un 49% exige subir un 96%
+            # para volver al mismo sitio. Es el dato que de verdad sitúa al
+            # inversor en el ciclo (sustituye a un tacómetro que solo repetía
+            # el tile de arriba).
+            _athd = km.get("ath_distancia_pct")
+            if isinstance(_athd, (int, float)) and _athd < -1:
+                caida = min(abs(_athd), 99.0)
+                recuperacion = (1.0 / (1.0 - caida / 100.0) - 1.0) * 100.0
+                fig = build_metric_bars(
+                    [("Caída acumulada", caida, "#F1495F"),
+                     ("Subida necesaria para recuperar máximos", recuperacion, "#E2B25C")],
+                    height=180, title="La asimetría de la recuperación", x_format="%")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_tok_recuperacion_{analysis.ticker}")
+        except Exception:
+            pass
+    _render_pros_cons(report, pros_title="✅ A favor", cons_title="⚠️ En contra")
+    _render_analysis_card(report, title="Análisis de Tokenomics")
+
+
+def render_crypto_adopcion(analysis: StockAnalysis):
+    report = analysis.reports.get("crypto_adopcion")
+    if report is None:
+        st.info("Adopción no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    if km.get("tvl_aplica"):
+        tiles = [
+            {"icon": "🔒", "label": "TVL de la Red",
+             "value": _fmt_grande(km.get("tvl")), "color": "#E2B25C",
+             "tooltip": "Total Value Locked: capital depositado y trabajando dentro de la red. El mejor proxy público de uso real."},
+            {"icon": "📈", "label": "TVL en 30 días",
+             "value": _v_or(km.get("tvl_delta_30d_pct"), "{:+.1f}", "%"),
+             "color": "#3DD68C" if isinstance(km.get("tvl_delta_30d_pct"), (int, float)) and km["tvl_delta_30d_pct"] > 0 else "#F1495F",
+             "tooltip": "Variación del TVL en el último mes: ¿entra o sale capital de la red?"},
+            {"icon": "⚖️", "label": "TVL / Market Cap",
+             "value": _v_or(km.get("tvl_mcap_ratio"), "{:.1f}", "%"), "color": "#6FA3E0",
+             "tooltip": "Cuánto valor real trabaja en la red por cada dólar de capitalización."},
+            {"icon": "🌊", "label": "Rotación Diaria",
+             "value": _v_or(km.get("turnover_pct"), "{:.1f}", "%"), "color": "#5E6570",
+             "tooltip": "Volumen 24h / market cap."},
+        ]
+    else:
+        # 4º tile SIN guiones muertos: si la cadena tiene TVL (Bitcoin, $3.5B)
+        # se muestra como dato informativo con su porqué; si no existe (XRP,
+        # DOGE, LINK, SHIB) el hueco lo ocupa la capitalización — siempre un
+        # dato real.
+        tiles = [
+            {"icon": "👑", "label": "Dominancia",
+             "value": _v_or(km.get("dominancia_propia"), "{:.2f}", "%"), "color": "#E2B25C",
+             "tooltip": "Porcentaje de TODO el mercado cripto que representa este activo."},
+            {"icon": "🌊", "label": "Rotación Diaria",
+             "value": _v_or(km.get("turnover_pct"), "{:.1f}", "%"), "color": "#6FA3E0",
+             "tooltip": "Volumen de 24h como % de la capitalización: liquidez real bajo el precio."},
+            {"icon": "💱", "label": "Volumen 24h",
+             "value": _fmt_grande(km.get("volumen_24h")), "color": "#3DD68C",
+             "tooltip": "Valor negociado en las últimas 24 horas, en todos los mercados."},
+        ]
+        if isinstance(km.get("tvl"), (int, float)) and km["tvl"] > 0:
+            tiles.append({
+                "icon": "🔒", "label": "TVL (informativo)",
+                "value": _fmt_grande(km.get("tvl")), "color": "#5E6570",
+                "tooltip": ("Valor bloqueado en aplicaciones sobre su red. En este activo es un dato "
+                            "INFORMATIVO: no puntúa en la nota de adopción, porque su caso de uso no "
+                            "es ser una cadena de contratos inteligentes.")})
+        else:
+            tiles.append({
+                "icon": "💎", "label": "Market Cap",
+                "value": _fmt_grande(km.get("market_cap")), "color": "#E2B25C",
+                "tooltip": "Capitalización total (precio × oferta en circulación)."})
+    _render_metric_tiles(tiles)
+
+    # ── Visual: TVL de 12 meses (cadenas de contratos) o dominancia comparada ──
+    try:
+        from data.crypto_data import CRYPTO_UNIVERSO, get_tvl_serie, get_crypto_data
+        _meta = CRYPTO_UNIVERSO.get(analysis.ticker) or {}
+        if km.get("tvl_aplica") and _meta.get("cadena_defi"):
+            serie = get_tvl_serie(_meta["cadena_defi"]) or []
+            if len(serie) > 30:
+                import pandas as _pd
+                _df = _pd.DataFrame(
+                    {"Close": [p[1] for p in serie]},
+                    index=_pd.to_datetime([p[0] for p in serie], unit="s"))
+                st.markdown('<div class="section-title-bar">Valor Bloqueado en la Red — 12 Meses</div>',
+                            unsafe_allow_html=True)
+                fig = build_mountain_chart(_df, f"TVL · {_meta.get('nombre', analysis.ticker)}", height=300,
+                                           es_precio=False, prefijo_y="$")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_adop_tvl_{analysis.ticker}")
+        else:
+            d_live = get_crypto_data(analysis.ticker) or {}
+            items = []
+            if isinstance(km.get("dominancia_propia"), (int, float)):
+                items.append((analysis.company_name or analysis.ticker,
+                              km["dominancia_propia"], "#E2B25C"))
+            if isinstance(d_live.get("dominancia_btc"), (int, float)) and analysis.ticker != "BTC":
+                items.append(("Bitcoin", d_live["dominancia_btc"], "#5E6570"))
+            if isinstance(d_live.get("dominancia_eth"), (int, float)) and analysis.ticker != "ETH":
+                items.append(("Ethereum", d_live["dominancia_eth"], "#5E6570"))
+            if len(items) >= 2:
+                st.markdown('<div class="section-title-bar">Peso en el Mercado Cripto</div>',
+                            unsafe_allow_html=True)
+                fig = build_metric_bars(items, height=200,
+                                        title="% de la capitalización total del mercado",
+                                        x_format="%")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_adop_dom_{analysis.ticker}")
+    except Exception:
+        pass
+
+    _render_pros_cons(report, pros_title="✅ A favor", cons_title="⚠️ En contra")
+    _render_analysis_card(report, title="Análisis de Adopción y Red")
+
+
+def render_crypto_sentimiento(analysis: StockAnalysis):
+    report = analysis.reports.get("crypto_sentimiento")
+    if report is None:
+        st.info("Sentimiento no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    fng = km.get("fng_actual")
+    fng_color = ("#F1495F" if isinstance(fng, (int, float)) and (fng <= 20 or fng >= 80)
+                 else "#E2B25C" if isinstance(fng, (int, float)) and (fng <= 40 or fng >= 60)
+                 else "#3DD68C")
+    _render_metric_tiles([
+        {"icon": "🧭", "label": "Fear & Greed",
+         "value": _v_or(fng, "{:.0f}") + (f" · {km.get('fng_clasificacion')}" if km.get("fng_clasificacion") else ""),
+         "color": fng_color,
+         "tooltip": "Índice de miedo/codicia del mercado cripto (0 = pánico, 100 = euforia). Lectura útil: CONTRARIA."},
+        {"icon": "⚡", "label": "Cambio 7 días",
+         "value": _v_or(km.get("delta_7d_pct"), "{:+.1f}", "%"),
+         "color": "#3DD68C" if isinstance(km.get("delta_7d_pct"), (int, float)) and km["delta_7d_pct"] >= 0 else "#F1495F",
+         "tooltip": "Variación del precio en 7 días."},
+        {"icon": "📅", "label": "Cambio 30 días",
+         "value": _v_or(km.get("delta_30d_pct"), "{:+.1f}", "%"),
+         "color": "#3DD68C" if isinstance(km.get("delta_30d_pct"), (int, float)) and km["delta_30d_pct"] >= 0 else "#F1495F",
+         "tooltip": "Variación del precio en 30 días."},
+        {"icon": "🗓️", "label": "En 1 año",
+         "value": _v_or(km.get("delta_1y_pct"), "{:+.1f}", "%"),
+         "color": "#3DD68C" if isinstance(km.get("delta_1y_pct"), (int, float)) and km["delta_1y_pct"] >= 0 else "#F1495F",
+         "tooltip": "Variación del precio en 12 meses."},
+    ])
+    # ── Visual: termómetro del Miedo y Codicia + su serie de 30 días ─────
+    g1, g2 = st.columns([1, 1.5], gap="small")
+    with g1:
+        try:
+            if isinstance(fng, (int, float)):
+                # Mismo instrumento que el gauge de sentimiento de acciones:
+                # título y etiqueta DENTRO del dial (bien espaciados) y el
+                # número grande sobre 100. Nada de títulos externos solapados.
+                fig = build_fear_greed_gauge(float(fng), height=200)
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_sent_fng_{analysis.ticker}")
+        except Exception:
+            pass
+    with g2:
+        try:
+            serie = (report.raw_data or {}).get("fng_serie") or []
+            if len(serie) >= 10:
+                import pandas as _pd
+                from datetime import timedelta as _td
+                vals = list(reversed(serie))               # antigua → reciente
+                fechas = [datetime.now() - _td(days=len(vals) - 1 - i)
+                          for i in range(len(vals))]
+                _df = _pd.DataFrame({"Close": vals}, index=_pd.DatetimeIndex(fechas))
+                fig = build_mountain_chart(_df, "Miedo y Codicia · 30 días", height=200, es_precio=False)
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_sent_serie_{analysis.ticker}")
+        except Exception:
+            pass
+    if km.get("tendencia"):
+        _render_insight_card("Tendencia de fondo",
+                             f"La estructura de precio es <strong>{km['tendencia']}</strong>.",
+                             color="#E2B25C")
+    _render_pros_cons(report, pros_title="✅ A favor", cons_title="⚠️ En contra")
+    _render_analysis_card(report, title="Análisis de Sentimiento")
+
+
+def render_crypto_riesgo(analysis: StockAnalysis):
+    report = analysis.reports.get("crypto_riesgo")
+    if report is None:
+        st.info("Riesgo no disponible.")
+        return
+    _render_agent_header(report)
+    km = report.key_metrics or {}
+    _render_metric_tiles([
+        {"icon": "🌡️", "label": "Volatilidad Anual",
+         "value": _v_or(km.get("vol_anual_pct"), "{:.0f}", "%"),
+         "color": "#F1495F" if isinstance(km.get("vol_anual_pct"), (int, float)) and km["vol_anual_pct"] >= 80 else "#E2B25C",
+         "tooltip": "Volatilidad anualizada. Como referencia: una acción típica ronda el 25-35%."},
+        {"icon": "📉", "label": "Caída desde Máximos",
+         "value": _v_or(km.get("ath_distancia_pct"), "{:.0f}", "%"),
+         "color": "#F1495F" if isinstance(km.get("ath_distancia_pct"), (int, float)) and km["ath_distancia_pct"] <= -60 else "#E2B25C",
+         "tooltip": "Distancia al máximo histórico: cuánto ha borrado ya este ciclo."},
+        # Para el propio Bitcoin no hay correlación consigo mismo que valga:
+        # se dice tal cual — "Es Bitcoin" — en vez de un guion o un 1.00.
+        ({"icon": "🔗", "label": "Correlación c/ BTC",
+          "value": "Es Bitcoin", "color": "#E2B25C",
+          "tooltip": "Es el propio Bitcoin: la referencia contra la que se mide el resto del mercado cripto."}
+         if analysis.ticker == "BTC" else
+         {"icon": "🔗", "label": "Correlación c/ BTC",
+          "value": _v_or(km.get("correlacion_btc_90d"), "{:.2f}"),
+          "color": "#F1495F" if isinstance(km.get("correlacion_btc_90d"), (int, float)) and km["correlacion_btc_90d"] >= 0.85 else "#3DD68C",
+          "tooltip": "Correlación de 90 días con Bitcoin. Alta = no diversifica dentro de cripto, es beta de BTC."}),
+        {"icon": "🏛️", "label": "Correlación c/ Bolsa",
+         "value": _v_or(km.get("correlacion_spy_90d"), "{:+.2f}"),
+         "color": "#6FA3E0",
+         "tooltip": "Correlación de 90 días con el S&P 500: cuánta diversificación aporta frente a una cartera de acciones."},
+    ])
+    # ── Visual: volatilidad comparada + curva de caída desde máximos ─────
+    g1, g2 = st.columns(2, gap="small")
+    with g1:
+        try:
+            items = []
+            if isinstance(km.get("vol_anual_pct"), (int, float)):
+                items.append((analysis.company_name or analysis.ticker,
+                              km["vol_anual_pct"], "#E2B25C"))
+            if isinstance(km.get("vol_btc_pct"), (int, float)) and analysis.ticker != "BTC":
+                items.append(("Bitcoin", km["vol_btc_pct"], "#5E6570"))
+            if isinstance(km.get("vol_spy_pct"), (int, float)):
+                items.append(("S&P 500", km["vol_spy_pct"], "#6FA3E0"))
+            if len(items) >= 2:
+                fig = build_metric_bars(items, height=210,
+                                        title="Volatilidad vs S&P 500",
+                                        x_format="%")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_riesgo_vol_{analysis.ticker}")
+        except Exception:
+            pass
+    with g2:
+        try:
+            from data.market_data import get_price_history
+            df = get_price_history(analysis.ticker, period="1y")
+            if df is not None and not df.empty and len(df) > 60:
+                import pandas as _pd
+                c = df["Close"].dropna()
+                dd = (c / c.cummax() - 1.0) * 100.0
+                _df = _pd.DataFrame({"Close": dd})
+                fig = build_mountain_chart(_df, "Caída desde máximos · 12 meses", height=210,
+                                           es_precio=False, prefijo_y="")
+                _plotly(fig, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"chart_riesgo_dd_{analysis.ticker}")
+        except Exception:
+            pass
+    _render_pros_cons(report, pros_title="✅ Aspectos favorables", cons_title="⚠️ Riesgos principales")
+    _render_analysis_card(report, title="Análisis de Riesgo")
+
+
 def render_welcome():
+    # ── Tipo de activo activo (pestañas ETF | ACCIONES | CRIPTO) ──────────
+    # El slider de abajo escribe en session_state ANTES del rerun, así que
+    # leerlo aquí arriba (para el tagline) siempre da el valor correcto.
+    _tipo = st.session_state.get("hero_tipo", "ACCIONES")
+    _CFG_TIPO = {
+        "ACCIONES": {
+            "tagline": "Analiza en profundidad cualquier acción del NYSE & NASDAQ",
+            "titulo": "◈ &nbsp;ANALIZA UNA ACCIÓN",
+            "sub": "Busca una acción por su ticker en el mercado: &nbsp;TSLA · NVDA · AAPL",
+            "ph": "TSLA · NVDA · AAPL…",
+            "lista": [(t, t) for t in POPULAR_TICKERS[:10]],
+        },
+        "ETF": {
+            "tagline": "Analiza en profundidad cualquier ETF domiciliado en EE.UU.",
+            "titulo": "◈ &nbsp;ANALIZA UN ETF",
+            "sub": "Busca un ETF por su ticker: &nbsp;SPY · QQQ · CSPX · VWCE",
+            "ph": "SPY · QQQ · CSPX…",
+            "lista": [(t, t) for t in POPULAR_ETFS],
+        },
+        "CRIPTO": {
+            "tagline": "Analiza en profundidad las principales criptomonedas",
+            "titulo": "◈ &nbsp;ANALIZA UNA CRIPTO",
+            "sub": "Busca una cripto por su símbolo: &nbsp;BTC · ETH · SOL",
+            "ph": "BTC · ETH · SOL…",
+            "lista": POPULAR_CRYPTOS,
+        },
+    }
+    _cfg = _CFG_TIPO.get(_tipo, _CFG_TIPO["ACCIONES"])
+
     # Hero
-    st.markdown("""
+    st.markdown(f"""
     <div class="alpha-hero">
         <div class="alpha-hero-brand">◈ DLP MARKET ANALYZER</div>
-        <div class="alpha-hero-tagline">Analiza en profundidad cualquier acción del NYSE & NASDAQ</div>
+        <div class="alpha-hero-tagline">{_cfg["tagline"]}</div>
         <div class="alpha-divider"></div>
     </div>
     """, unsafe_allow_html=True)
@@ -4166,22 +4997,38 @@ def render_welcome():
     _, center_col, _ = st.columns([1, 50, 1])
 
     with center_col:
+        # ── BARRA SUPERIOR: slider de tipo + píldora del escáner ──────────
+        # Dos piezas visualmente separadas (decisión de UX): a la izquierda el
+        # slider ETF | ACCIONES | CRIPTO (Acciones al centro y por defecto,
+        # mismo lenguaje visual que el menú de secciones de los análisis), y a
+        # la derecha, aislada, la píldora "Escanear el Mercado" con su radar
+        # barriendo de izquierda a derecha — es el NUEVO acceso al escáner.
+        with st.container(key="herobar"):
+            bar_izq, _bar_gap, bar_der = st.columns([2.6, 0.14, 1.15], gap="small")
+            with bar_izq:
+                with st.container(key="herotipo"):
+                    st.radio("Tipo de activo", ["ETF", "ACCIONES", "CRIPTO"],
+                             index=1, horizontal=True, key="hero_tipo",
+                             label_visibility="collapsed")
+            with bar_der:
+                with st.container(key="scanpill"):
+                    scan_btn = st.button("◎  ESCANEAR EL MERCADO",
+                                         use_container_width=True,
+                                         key="hero_scan")
+
         # El container keyed (st-key-herocard) es el ANCLA CSS de toda la
         # card — antes el CSS colgaba del TEXTO del placeholder (frágil:
         # cambiar el copy rompía la card entera). Ahora el copy es libre.
         with st.container(key="herocard"):
-            # ── DOS RUTAS, DOS ZONAS ─────────────────────────────────────
-            # Antes las dos acciones competían en la misma franja visual y el
-            # escáner pasaba desapercibido. Ahora cada ruta tiene su mitad,
-            # su titular y su propio CTA, separadas por el clásico divisor
-            # "O" (patrón de dos caminos). Mucho más intuitivo de un vistazo.
-            zona_izq, zona_o, zona_der = st.columns([1.45, 0.12, 1], gap="small")
-
-            with zona_izq:
+            # ── UNA SOLA INTENCIÓN: ANALIZA (el escáner vive arriba) ─────
+            # El contenido (titular, subtítulo, tape, placeholder) depende de
+            # la pestaña activa del slider.
+            _tape_tickers = [y for _, y in _cfg["lista"]]
+            _tape_nombres = {y: s for s, y in _cfg["lista"]}
+            if True:
                 st.markdown(
-                    '<div class="hz-title">◈ &nbsp;ANALIZA UNA ACCIÓN</div>'
-                    '<div class="hz-sub">Busca una acción por su ticker en el '
-                    'mercado: &nbsp;TSLA · NVDA · AAPL</div>',
+                    f'<div class="hz-title">{_cfg["titulo"]}</div>'
+                    f'<div class="hz-sub">{_cfg["sub"]}</div>',
                     unsafe_allow_html=True)
 
                 # Ticker-tape estilo pantalla de trading floor: precios en
@@ -4189,22 +5036,23 @@ def render_welcome():
                 # (cero red, cero espera); sin datos aún → solo los símbolos.
                 try:
                     from data.market_data import get_live_snapshot_cached
-                    _tape_snap = get_live_snapshot_cached(POPULAR_TICKERS)
+                    _tape_snap = get_live_snapshot_cached(_tape_tickers)
                 except Exception:
                     _tape_snap = {}
                 _items = []
-                for _tk in POPULAR_TICKERS:
+                for _tk in _tape_tickers:
                     _d = _tape_snap.get(_tk, {})
                     _p = _d.get("price")
                     _c = _d.get("change_pct", 0) or 0
+                    _vis = _tape_nombres.get(_tk, _tk)
                     if _p:
                         _fl = "▲" if _c >= 0 else "▼"
                         _items.append(
-                            f'<span class="hz-tape-item">{_tk} '
+                            f'<span class="hz-tape-item">{_vis} '
                             f'{_p:,.2f} <span class="hz-tape-chg">{_fl}'
                             f'{abs(_c):.2f}%</span></span>')
                     else:
-                        _items.append(f'<span class="hz-tape-item">{_tk}</span>')
+                        _items.append(f'<span class="hz-tape-item">{_vis}</span>')
                 _tape_html = '<span class="hz-tape-sep">·</span>'.join(_items)
                 st.markdown(
                     f'<div class="hz-tape" aria-hidden="true"><div class="hz-tape-track">'
@@ -4218,47 +5066,13 @@ def render_welcome():
                     ticker_input = st.text_input(
                         label="Ticker",
                         label_visibility="collapsed",
-                        placeholder="TSLA · NVDA · AAPL…",
+                        placeholder=_cfg["ph"],
                         key="hero_ticker_input",
                     ).upper().strip()
                     analyze_btn = st.form_submit_button(
                         "🔍  Análisis DLP", use_container_width=True, type="primary")
                 st.markdown('<div class="cta-hint">escribe un ticker y pulsa '
                             'Enter</div>', unsafe_allow_html=True)
-
-            with zona_o:
-                st.markdown(
-                    '<div class="hz-or"><span class="hz-or-line"></span>'
-                    '<span class="hz-or-badge">O</span>'
-                    '<span class="hz-or-line"></span></div>',
-                    unsafe_allow_html=True)
-
-            with zona_der:
-                st.markdown(
-                    '<div class="hz-title">◎ &nbsp;EXPLORA EL MERCADO</div>'
-                    '<div class="hz-sub">Escanea miles de acciones al mismo '
-                    'tiempo y encuentra oportunidades en el mercado</div>',
-                    unsafe_allow_html=True)
-                # Escáner rectangular CSS: barrido vertical que recorre el
-                # panel + blips verdes que aparecen un instante y se apagan,
-                # como hallazgos del escáner. Puro CSS, mismo ancho del botón.
-                st.markdown(
-                    '<div class="hz-scan-wrap" aria-hidden="true">'
-                    '<div class="hz-scan">'
-                    '<span class="hz-scan-grid"></span>'
-                    '<span class="hz-scan-beam"></span>'
-                    '<span class="hz-scan-blip b1"></span>'
-                    '<span class="hz-scan-blip b2"></span>'
-                    '<span class="hz-scan-blip b3"></span>'
-                    '<span class="hz-scan-blip b4"></span>'
-                    '<span class="hz-scan-blip b5"></span>'
-                    '</div></div>',
-                    unsafe_allow_html=True)
-                scan_btn = st.button(
-                    "◎  Escanear el Mercado", use_container_width=True,
-                    key="hero_scan", type="primary")
-                st.markdown('<div class="cta-hint">elige tus filtros antes '
-                            'de lanzarlo</div>', unsafe_allow_html=True)
 
         if analyze_btn and ticker_input:
             run_analysis(ticker_input)
@@ -4267,8 +5081,10 @@ def render_welcome():
             st.session_state.scanner_config_open = True
             st.rerun()
 
-    # ── Quick Access Tickers ──────────────────────────────────────────
-    st.markdown('<div class="section-header">⊕  Acceso Rápido — Tickers Populares</div>', unsafe_allow_html=True)
+    # ── Quick Access Tickers (universo de la pestaña activa) ───────────
+    _titulo_grid = {"ACCIONES": "Tickers Populares", "ETF": "ETFs Populares",
+                    "CRIPTO": "Criptos Principales"}.get(_tipo, "Tickers Populares")
+    st.markdown(f'<div class="section-header">⊕  Acceso Rápido — {_titulo_grid}</div>', unsafe_allow_html=True)
 
     # Skeleton del grid mientras cargan los precios (~1-3s) — la página ya
     # muestra la ESTRUCTURA final (10 placeholders shimmer) en vez de una
@@ -4284,7 +5100,7 @@ def render_welcome():
     from data.market_data import get_live_snapshot
     snapshot = {}
     try:
-        snapshot = get_live_snapshot(POPULAR_TICKERS)
+        snapshot = get_live_snapshot(_tape_tickers)
     except Exception:
         pass
 
@@ -4293,10 +5109,11 @@ def render_welcome():
 
     # Grid 5 cols x 2 rows — tarjetas amplias, 100% clicables, con sparkline
     # intradía (5 días, textura real de mercado) y footer ▾ que invita al clic.
-    rows = [POPULAR_TICKERS[:5], POPULAR_TICKERS[5:10]]
+    _lista_grid = _cfg["lista"][:10]
+    rows = [_lista_grid[:5], _lista_grid[5:10]]
     for row_idx, row in enumerate(rows):
         cols = st.columns(5, gap="small")
-        for i, ticker in enumerate(row):
+        for i, (simbolo, ticker) in enumerate(row):
             with cols[i]:
                 data = snapshot.get(ticker, {})
                 price = data.get("price")
@@ -4311,7 +5128,7 @@ def render_welcome():
                                   for c in ticker)
                 with st.container(key=f"qtile_{tk_safe}"):
                     st.markdown(
-                        f'<div class="qt-head"><span class="tt-symbol">{ticker}</span>'
+                        f'<div class="qt-head"><span class="tt-symbol">{simbolo}</span>'
                         f'<span class="tt-change" style="color:{change_color};">{change_str}</span></div>'
                         f'<div class="qt-price">{price_str}</div>'
                         f'{_sparkline_svg(data.get("closes"), change >= 0, w=120, h=30)}'
@@ -4328,7 +5145,7 @@ def render_welcome():
                     # ratón en el resto de la tarjeta (p. ej. «VER TODO») caía
                     # al vacío. Sin tooltip la cadena es directa y el overlay
                     # cubre la tarjeta ENTERA.
-                    if st.button(f"◈ {ticker}", key=f"qtilebtn_{tk_safe}"):
+                    if st.button(f"◈ {simbolo}", key=f"qtilebtn_{tk_safe}"):
                         st.session_state.quick_view_ticker = ticker
                         st.session_state.selected_ticker = None
                         st.rerun()
@@ -4496,7 +5313,7 @@ def _apply_sidebar_collapse():
         unsafe_allow_html=True,
     )
     # Botón para reabrir (arriba a la izquierda, fijo vía CSS).
-    if st.button("»", key="sidebar_expand_btn", help="Mostrar la columna"):
+    if st.button("»", key="sidebar_expand_btn"):
         st.session_state.sidebar_collapsed = False
         st.rerun()
 
@@ -4523,7 +5340,10 @@ def main():
     has_selected_analysis = (
         st.session_state.get("selected_ticker") in (st.session_state.get("analyses") or {})
     )
-    if (not in_welcome) and (not has_selected_analysis):
+    _en_escaner = (st.session_state.get("scanner_config_open")
+                   or st.session_state.get("_show_scan_results")
+                   or bool(st.session_state.scan_results))
+    if (not in_welcome) and (not has_selected_analysis) and (not _en_escaner):
         render_top_nav()
 
     selected = st.session_state.selected_ticker
@@ -4536,6 +5356,20 @@ def main():
     if qv:
         render_quick_view(qv)
         return
+
+    # ── Recuperación ANTI-EXPULSIÓN: si hay un análisis seleccionado pero la
+    # poda de memoria (se conservan solo los N más recientes) lo sacó del dict,
+    # cualquier rerun —contraer el sidebar, por ejemplo— devolvía al inicio
+    # "sin sentido". Antes de rendirse, se re-carga desde disco y la vista se
+    # mantiene EXACTA.
+    if selected and selected not in st.session_state.analyses:
+        try:
+            from data.persistence import load_all_analyses
+            _disco = load_all_analyses() or {}
+            if selected in _disco:
+                st.session_state.analyses[selected] = _disco[selected]
+        except Exception:
+            pass
 
     if not selected or selected not in st.session_state.analyses:
         # Si el scanner config está abierto, mostrarlo (tiene prioridad sobre scan_results y welcome)
@@ -4555,15 +5389,13 @@ def main():
 
     # Botón "← Volver al Scan" — visible cuando hay resultados de scan activos
     if st.session_state.scan_results:
-        scan_count = len(st.session_state.scan_results)
         col_back, col_spacer = st.columns([1, 5])
         with col_back:
-            if st.button(f"← Volver al Scan ({scan_count})", key="back_to_scan",
-                         use_container_width=True,
-                         help="Volver a los resultados del último scan de mercado"):
-                st.session_state.selected_ticker = None
-                st.session_state.quick_view_ticker = None
-                st.rerun()
+            with st.container(key="scnav_backscan"):
+                if st.button("← Volver al radar", key="back_to_scan"):
+                    st.session_state.selected_ticker = None
+                    st.session_state.quick_view_ticker = None
+                    st.rerun()
 
     # Header del ticker (premium)
     rec_badge = get_recommendation_badge(analysis.recommendation)
@@ -4572,9 +5404,23 @@ def main():
     compound_badge = ('<span class="compound-machine-badge">💎 COMPOUNDER</span>'
                       if getattr(analysis, "is_compound_machine", False) else "")
 
+    # Etiqueta del TIPO de activo, siempre visible arriba: el usuario sabe de
+    # un vistazo si está mirando una acción, un ETF (US o UCITS) o una cripto.
+    _tipo_txt = {"accion": "ACCIÓN", "etf": "ETF", "crypto": "CRIPTO"}.get(
+        getattr(analysis, "asset_type", "accion") or "accion", "ACCIÓN")
+    try:
+        _pk = ((analysis.reports.get("etf_perfil") or None) and
+               (analysis.reports["etf_perfil"].key_metrics or {})) or {}
+        if _tipo_txt == "ETF" and _pk.get("ucits"):
+            _tipo_txt = "ETF UCITS"
+    except Exception:
+        pass
+    tipo_badge = f'<span class="asset-tipo-badge">{_tipo_txt}</span>'
+
     st.markdown(
         f'<div class="stock-header">'
         f'<span class="stock-header-ticker">{analysis.ticker}</span>'
+        f'{tipo_badge}'
         f'<span class="stock-header-name">{analysis.company_name}</span>'
         f'<span>{rec_badge}</span>'
         f'{compound_badge}'
@@ -4591,8 +5437,18 @@ def main():
     # Sustituye a st.tabs manteniendo INTACTAS todas las render functions. Con
     # key POR TICKER cada análisis recuerda en qué sección estabas (st.tabs no
     # acepta key y se reiniciaba al cambiar de acción).
-    sections = ["Overview", "Técnico", "Fundamentales", "Futuro",
-                "Smart Money", "Contexto del Mercado", "Riesgo"]
+    # Secciones según el tipo de activo. Acciones conserva EXACTAMENTE las
+    # suyas; ETF y cripto tienen su propio juego (análisis distintos por diseño).
+    _tipo_analisis = getattr(analysis, "asset_type", "accion") or "accion"
+    sections = {
+        "accion": ["Overview", "Técnico", "Fundamentales", "Futuro",
+                   "Smart Money", "Contexto del Mercado", "Riesgo"],
+        "etf": ["Overview", "Técnico", "Perfil y Costes", "Composición",
+                "Rendimiento"],
+        "crypto": ["Overview", "Técnico", "Tokenomics", "Adopción y Red",
+                   "Sentimiento", "Riesgo"],
+    }.get(_tipo_analisis, ["Overview", "Técnico", "Fundamentales", "Futuro",
+                           "Smart Money", "Contexto del Mercado", "Riesgo"])
     # El key del container se vuelve clase CSS (st-key-…): solo chars seguros
     # (tickers como BRK.B llevarían un punto inválido en un class name).
     _tk_safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in analysis.ticker)
@@ -4604,8 +5460,48 @@ def main():
                  label_visibility="collapsed")
     sect = st.session_state.get(sect_key) or sections[0]
 
+    # ── Despacho ETF ─────────────────────────────────────────────────────
+    if _tipo_analisis == "etf":
+        _aviso_ucits(analysis)     # solo pinta algo si el fondo es UCITS
+        if sect == "Overview":
+            render_overview_etf(analysis)
+            _render_disclaimer()
+        elif sect == "Perfil y Costes":
+            render_etf_perfil(analysis)
+        elif sect == "Composición":
+            render_etf_composicion(analysis)
+        elif sect == "Rendimiento":
+            render_etf_rendimiento(analysis)
+            # Es la sección de riesgo del ETF → mismo aviso que en Riesgo.
+            _render_disclaimer()
+        elif sect == "Técnico":
+            render_technical(analysis)
+        return
+
+    # ── Despacho CRIPTO ──────────────────────────────────────────────────
+    if _tipo_analisis == "crypto":
+        if sect == "Overview":
+            render_overview_crypto(analysis)
+            _render_disclaimer()
+        elif sect == "Tokenomics":
+            render_crypto_tokenomics(analysis)
+        elif sect == "Adopción y Red":
+            render_crypto_adopcion(analysis)
+        elif sect == "Sentimiento":
+            render_crypto_sentimiento(analysis)
+        elif sect == "Técnico":
+            render_technical(analysis)
+        elif sect == "Riesgo":
+            render_crypto_riesgo(analysis)
+            _render_disclaimer()
+        return
+
     if sect == "Overview":
         render_overview(analysis)
+        # El aviso legal se pinta AQUÍ y no dentro de render_overview para que
+        # aparezca al final del todo pase lo que pase: si la función corta antes
+        # por falta de datos, el disclaimer sigue estando.
+        _render_disclaimer()
     elif sect == "Técnico":
         render_technical(analysis)
     elif sect == "Fundamentales":
@@ -4629,6 +5525,7 @@ def main():
         render_sentiment(analysis)
     elif sect == "Riesgo":
         render_risk(analysis)
+        _render_disclaimer()
 
 
 if __name__ == "__main__":

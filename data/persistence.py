@@ -374,6 +374,9 @@ def stock_analysis_from_dict(d: dict):
             asymmetry_direction=d.get("asymmetry_direction"),
             asymmetry_strength=d.get("asymmetry_strength"),
             is_compound_machine=bool(d.get("is_compound_machine", False)),
+            # Retrocompatible: los JSON guardados antes de ETF/cripto no traen
+            # el campo → son análisis de acciones.
+            asset_type=d.get("asset_type", "accion"),
             timestamp=d.get("timestamp", datetime.now().isoformat()),
         )
     except Exception:

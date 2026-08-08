@@ -156,7 +156,7 @@ html, body, [data-testid="stAppViewContainer"] {
 }
 
 [data-testid="stMainBlockContainer"] {
-    padding-top: 1.5rem !important;
+    padding-top: 0.9rem !important;
     padding-bottom: 3rem !important;
     max-width: 1400px !important;
 }
@@ -190,7 +190,8 @@ h3 { color: var(--text) !important; font-weight: 600 !important; }
 /* ── HERO SECTION ───────────────────────────────────────────────────── */
 .alpha-hero {
     text-align: center;
-    padding: 56px 20px 36px;
+    /* 56px → 18px: la fecha vive justo encima del título; sin espacio muerto. */
+    padding: 18px 20px 30px;
     animation: fadeInUp 0.5s var(--ease-out);
 }
 
@@ -948,12 +949,14 @@ hr {
 
 /* ── Top header bar ────────────────────────────────────────────────── */
 .terminal-topbar {
+    /* Compacta: sin marca, sin borde, sin franja. Solo el chip de fecha a la
+       derecha, pegado al contenido que viene debajo. */
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 16px;
-    padding: 8px 0 14px 0;
-    border-bottom: 1px solid var(--hairline);
-    margin-bottom: 8px;
+    padding: 0;
+    margin: 0 0 2px 0;
     animation: fadeIn 0.5s ease-out;
 }
 
@@ -1917,6 +1920,33 @@ hr {
     color: var(--text);
     font-size: 0.89rem;
     line-height: 1.7;
+}
+
+/* ── Disclaimer legal — presente pero deliberadamente discreto ─────────
+   Va al final del Overview y del Riesgo. Tarjeta con el MISMO fondo oscuro
+   que el resto (surface-1) para que no llame la atención, texto gris
+   apagado y letra pequeña: tiene que estar y poder leerse, no competir
+   con el análisis. Sin animación de entrada, a propósito. */
+.disclaimer-card {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 12px 16px;
+    margin: 26px 0 4px 0;
+}
+
+.disclaimer-text {
+    color: #5E6570;              /* gris apagado, el mismo de los "no aplica" */
+    font-size: 0.68rem;
+    line-height: 1.6;
+    letter-spacing: 0.005em;
+    margin: 0;
+    text-align: center;
+}
+
+@media (max-width: 640px) {
+    .disclaimer-card { padding: 10px 12px; margin-top: 20px; }
+    .disclaimer-text { font-size: 0.64rem; text-align: left; }
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -3753,6 +3783,11 @@ section[data-testid="stSidebar"] {
     flex: 1 1 0;       /* mismo ancho para ambas, sin base mínima que fuerce wrap */
     min-width: 0;      /* permite que encojan en lugar de desbordar/apilar */
     margin: 0;         /* el gap de la fila gestiona el espaciado */
+    /* OJO: height:auto, no 100%. Con align-items:stretch, una altura explícita
+       ANULA el estirado (solo estira cuando la altura es auto) — medido: las
+       dos tarjetas salían 240px vs 262px pese al stretch. Con auto, la fila
+       las iguala SIEMPRE a la más alta. */
+    height: auto;
 }
 
 .signal-card {
@@ -4589,6 +4624,587 @@ div[class*="st-key-sectbar_"] [role="radiogroup"] label:has(input:checked) p::be
     width: 100% !important; height: 100% !important;
 }
 
+/* ══ ESCÁNER · FILAS DE UNA LÍNEA ══════════════════════════════════════
+   Cada filtro = [cabecera fija] + [carril de píldoras]. LEY: ningún botón
+   se parte en dos líneas (nowrap por decreto) y el carril, si no cabe, se
+   desliza lateralmente con fade en los bordes — jamás se apila. */
+div[class*="st-key-scfila_"] {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 8px 12px;
+    margin: 6px 0;
+}
+div[class*="st-key-scfila_"] [data-testid="stHorizontalBlock"] {
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+}
+/* Cabecera FIJA (170px) + carril que absorbe el resto SIN empujar. OJO: hay
+   un stLayoutWrapper entre el container keyed y el bloque, así que el hijo
+   directo (>) no matchea — se selecciona por CONTENIDO con :has(). */
+div[class*="st-key-scfila_"] [data-testid="stColumn"]:has(.scfila-head) {
+    flex: 0 0 170px !important; width: 170px !important; min-width: 170px !important;
+}
+div[class*="st-key-scfila_"] [data-testid="stColumn"]:has([class*="st-key-scrail_"]) {
+    flex: 1 1 auto !important; min-width: 0 !important; width: auto !important;
+}
+@media (max-width: 980px) {
+    /* Recuadro estrecho (Whop): con la cabecera AL LADO el carril quedaba en
+       ~220px y todo se cortaba. La cabecera pasa a su PROPIA línea y el carril
+       hereda el ancho completo de la tarjeta. El :has(.scfila-head) apunta solo
+       al bloque EXTERIOR (el carril interno no contiene cabecera y conserva su
+       nowrap). */
+    /* Streamlit mete ~5rem de padding lateral a este ancho (160px perdidos).
+       Solo en las páginas del escáner (config y resultados) se recorta a
+       1.2rem — el resto de vistas no cambia. */
+    [data-testid="stMainBlockContainer"]:has(div[class*="st-key-scfila_"]),
+    [data-testid="stMainBlockContainer"]:has(div[class*="st-key-scanorden"]) {
+        padding-left: 1.2rem !important;
+        padding-right: 1.2rem !important;
+    }
+    div[class*="st-key-scfila_"] [data-testid="stHorizontalBlock"]:has(.scfila-head) {
+        flex-wrap: wrap !important;
+        row-gap: 4px !important;
+    }
+    div[class*="st-key-scfila_"] [data-testid="stColumn"]:has(.scfila-head) {
+        flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;
+    }
+    div[class*="st-key-scfila_"] [data-testid="stColumn"]:has([class*="st-key-scrail_"]) {
+        flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;
+    }
+    /* Píldoras compactas: a 528px de carril las filas de 5 sectores se pasaban
+       40-48px. Tipografía y padding reducidos las devuelven al ancho; Tamaño
+       (5 rangos de capital, 147px de exceso) es el único que conserva el
+       scroll enmascarado de seguridad.
+       (Doble ancestro para ganar a las reglas base, que vienen más abajo.) */
+    div[class*="st-key-scfila_"] div[class*="st-key-scrail_"] button {
+        padding: 0 8px !important;
+    }
+    div[class*="st-key-scfila_"] div[class*="st-key-scrail_"] button p {
+        font-size: 0.66rem !important;
+        letter-spacing: 0.02em !important;
+    }
+    div[class*="st-key-scfila_"] div[class*="st-key-scrail_"] [data-testid="stHorizontalBlock"] {
+        gap: 4px !important;
+    }
+}
+/* Navegación del scanner (Volver / Restablecer): una línea, por ley */
+div[class*="st-key-scnav_"] button {
+    white-space: nowrap !important;
+    height: 36px !important; min-height: 36px !important;
+    width: auto !important; padding: 0 16px !important;
+}
+div[class*="st-key-scnav_"] button p {
+    white-space: nowrap !important; font-size: 0.74rem !important; margin: 0 !important;
+}
+/* LA LEY también para la fila superior (⌂ Volver al Inicio / Ajustar filtros /
+   Restablecer): el texto JAMÁS parte en dos líneas, y en anchos estrechos la
+   columna se ciñe al contenido en vez de estrangular el botón. */
+div[class*="st-key-topnav_home_btn"] button,
+div[class*="st-key-topnav_home_btn"] button p,
+div[class*="st-key-scan_back_to_filters"] button,
+div[class*="st-key-scan_back_to_filters"] button p {
+    white-space: nowrap !important;
+}
+@media (max-width: 980px) {
+    [data-testid="stColumn"]:has(div[class*="st-key-topnav_home_btn"]),
+    [data-testid="stColumn"]:has(div[class*="st-key-scan_back_to_filters"]),
+    [data-testid="stColumn"]:has(div[class*="st-key-scnav_reset"]) {
+        flex: 0 0 max-content !important;
+        width: auto !important;
+        min-width: max-content !important;
+    }
+    /* «Ordenar por»: el título se ciñe y las opciones se desplazan en su
+       carril enmascarado en vez de cortarse en seco. */
+    div[class*="st-key-scanorden"] [data-testid="stColumn"]:has(.scfila-title) {
+        flex: 0 0 max-content !important; width: auto !important;
+        min-width: max-content !important;
+    }
+    div[class*="st-key-scanorden"] [role="radiogroup"] {
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        scrollbar-width: none;
+        -webkit-mask-image: linear-gradient(90deg, transparent 0,
+            #000 8px, #000 calc(100% - 12px), transparent 100%);
+                mask-image: linear-gradient(90deg, transparent 0,
+            #000 8px, #000 calc(100% - 12px), transparent 100%);
+    }
+    div[class*="st-key-scanorden"] [role="radiogroup"]::-webkit-scrollbar {
+        display: none;
+    }
+    div[class*="st-key-scanorden"] [role="radiogroup"] label {
+        flex: 0 0 auto !important; white-space: nowrap !important;
+    }
+}
+.scfila-head {
+    display: flex; align-items: center; gap: 8px;
+    white-space: nowrap; overflow: hidden;
+    padding: 4px 0;
+}
+.scfila-icon { font-size: 0.95rem; flex: 0 0 auto; }
+.scfila-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: #C9CDD3; overflow: hidden; text-overflow: ellipsis;
+}
+/* El carril: una sola línea SIEMPRE, desplazable si no cabe */
+div[class*="st-key-scrail_"] [data-testid="stHorizontalBlock"] {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    gap: 6px !important;
+    padding: 2px 0;
+    scrollbar-width: none;               /* Firefox */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0,
+        #000 10px, #000 calc(100% - 14px), transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0,
+        #000 10px, #000 calc(100% - 14px), transparent 100%);
+}
+div[class*="st-key-scrail_"] [data-testid="stHorizontalBlock"]::-webkit-scrollbar {
+    display: none;                       /* Chrome/Safari */
+}
+div[class*="st-key-scrail_"] [data-testid="stColumn"] {
+    /* LLENAN el ancho: crecen por igual; min-width=max-content garantiza que
+       ningún texto se parta. Si de verdad no caben, el overflow-x del bloque
+       actúa de red de seguridad (nunca dos líneas). */
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: max-content !important;
+}
+div[class*="st-key-scrail_"] button {
+    width: 100% !important;
+}
+/* LA LEY: botones de una sola línea de alto, tipografía del sistema de
+   píldoras, activo con el dorado del herotipo/sectbar (no el primary de
+   Streamlit). */
+div[class*="st-key-scrail_"] button,
+div[class*="st-key-scfila_orden"] button {
+    white-space: nowrap !important;
+    height: 36px !important; min-height: 36px !important;
+    padding: 0 12px !important;
+    border-radius: 10px !important;
+    background: transparent !important;
+    border: 1px solid var(--hairline-2) !important;
+    box-shadow: none !important;
+    transition: border-color .15s ease, background .15s ease,
+                transform 160ms ease-out;
+}
+div[class*="st-key-scrail_"] button p,
+div[class*="st-key-scfila_orden"] button p {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.70rem !important; font-weight: 600 !important;
+    letter-spacing: 0.04em !important;
+    color: #8D949E !important;
+    white-space: nowrap !important;
+    margin: 0 !important;
+}
+div[class*="st-key-scrail_"] button:hover,
+div[class*="st-key-scfila_orden"] button:hover {
+    background: rgba(255,255,255,0.04) !important;
+    border-color: var(--hairline-2) !important;
+}
+div[class*="st-key-scrail_"] button:active,
+div[class*="st-key-scfila_orden"] button:active {
+    transform: scale(0.97);
+}
+div[class*="st-key-scrail_"] button[kind="primary"],
+div[class*="st-key-scfila_orden"] button[kind="primary"] {
+    background: rgba(var(--accent-rgb), 0.10) !important;
+    border-color: rgba(var(--accent-rgb), 0.55) !important;
+    box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.20),
+                inset 0 0 6px rgba(var(--accent-rgb), 0.08) !important;
+}
+div[class*="st-key-scrail_"] button[kind="primary"] p,
+div[class*="st-key-scfila_orden"] button[kind="primary"] p {
+    color: var(--accent) !important;
+}
+/* La fila de orden también es de una línea */
+div[class*="st-key-scfila_orden"] {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 8px 12px; margin: 6px 0 14px;
+}
+div[class*="st-key-scfila_orden"] [data-testid="stHorizontalBlock"] {
+    align-items: center !important; flex-wrap: nowrap !important;
+    overflow-x: auto !important; scrollbar-width: none;
+}
+div[class*="st-key-scfila_orden"] [data-testid="stHorizontalBlock"]::-webkit-scrollbar { display: none; }
+div[class*="st-key-scfila_orden"] [data-testid="stColumn"] {
+    flex: 0 0 auto !important; width: auto !important; min-width: 0 !important;
+}
+/* Hero del scanner compactado (alto de embed) */
+.scanner-hero--compacto { padding-top: 4px !important; padding-bottom: 10px !important; }
+.scanner-hero--compacto .scanner-hero-sub { margin-bottom: 2px !important; }
+
+/* ══ RESULTADOS DEL RADAR ══════════════════════════════════════════════ */
+/* Cabecera de bloque del escáner CENTRADA, con regla a ambos lados */
+.scanner-group-head--centrada {
+    justify-content: center !important;
+    text-align: center;
+}
+.scanner-group-head--centrada .scanner-group-titles { text-align: center; flex: 0 0 auto; }
+.scanner-group-head--centrada .scanner-group-rule { flex: 1 1 0 !important; }
+/* «Volver al radar»: una sola línea, por ley */
+div[class*="st-key-scnav_backscan"] button {
+    white-space: nowrap !important; height: 36px !important;
+    min-height: 36px !important; width: auto !important; padding: 0 16px !important;
+}
+div[class*="st-key-scnav_backscan"] button p {
+    white-space: nowrap !important; font-size: 0.74rem !important; margin: 0 !important;
+}
+
+/* Fondo oscurecido a pantalla completa para la carga lanzada desde el radar */
+.alpha-dim-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(8, 10, 13, 0.62);
+    backdrop-filter: blur(2px);
+    z-index: 9990;
+}
+/* «Ordenar por» como selector de pestañas (lenguaje del sectbar) */
+div[class*="st-key-scanorden"] {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 8px 12px; margin: 6px 0 14px;
+}
+div[class*="st-key-scanorden"] [data-testid="stHorizontalBlock"] {
+    align-items: center !important; flex-wrap: nowrap !important;
+}
+div[class*="st-key-scanorden"] .scfila-head { padding: 0; }
+div[class*="st-key-scanorden"] [data-testid="stRadio"] {
+    display: flex !important; align-items: center;
+}
+div[class*="st-key-scanorden"] [role="radiogroup"] {
+    display: inline-flex !important; flex-wrap: nowrap; gap: 3px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--hairline-2);
+    border-radius: 12px;
+    padding: 4px;
+}
+div[class*="st-key-scanorden"] [role="radiogroup"] label {
+    margin: 0 !important; padding: 7px 16px !important;
+    border-radius: 9px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer; transition: background .15s ease, border-color .15s ease;
+}
+div[class*="st-key-scanorden"] [role="radiogroup"] label > div:first-child {
+    display: none !important;
+}
+div[class*="st-key-scanorden"] [role="radiogroup"] label p {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.70rem !important; font-weight: 600 !important;
+    letter-spacing: 0.05em !important; color: #8D949E !important;
+    margin: 0 !important; white-space: nowrap !important;
+}
+div[class*="st-key-scanorden"] [role="radiogroup"] label:has(input:checked) {
+    background: rgba(var(--accent-rgb), 0.10) !important;
+    border-color: rgba(var(--accent-rgb), 0.55) !important;
+    box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.20);
+}
+div[class*="st-key-scanorden"] [role="radiogroup"] label:has(input:checked) p {
+    color: var(--accent) !important;
+}
+
+.scan-radar-head {
+    position: relative; overflow: hidden;
+    background: var(--surface-1);
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin: 6px 0 12px;
+}
+.scan-radar-head::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: -30%;
+    width: 24%;
+    background: linear-gradient(90deg, transparent 0%,
+        rgba(var(--accent-rgb), 0.08) 30%, rgba(var(--accent-rgb), 0.22) 55%,
+        rgba(var(--accent-rgb), 0.08) 80%, transparent 100%);
+    animation: scanpill-sweep 3.4s linear infinite;
+    pointer-events: none;
+}
+.scan-radar-title {
+    position: relative; z-index: 1;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.05rem; font-weight: 800;
+    letter-spacing: 0.12em; color: var(--accent);
+}
+.scan-radar-sub {
+    position: relative; z-index: 1;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; color: #8D949E; margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Tarjeta de resultado (lenguaje de los qtiles del home) */
+div[class*="st-key-scres_"] {
+    background: var(--surface-1);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    padding: 12px 14px 10px;
+    margin: 5px 0;
+    box-shadow: var(--inset-hi), var(--shadow-1);
+    transition: border-color .15s ease;
+}
+div[class*="st-key-scres_"]:hover { border-color: rgba(var(--accent-rgb), 0.35); }
+.scan-res-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.scan-res-ticker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.0rem; font-weight: 800; color: #C9CDD3; flex: 0 0 auto;
+}
+.scan-res-name {
+    font-size: 0.72rem; color: #8D949E; flex: 1 1 auto; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.scan-res-score {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.95rem; font-weight: 800; flex: 0 0 auto;
+    border: 1px solid; border-radius: 8px; padding: 1px 8px;
+}
+.scan-res-score-max { font-size: 0.6rem; color: #5E6570; font-weight: 400; }
+.scan-res-priceline { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 2px; }
+.scan-res-price {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.15rem; font-weight: 700; color: #E8EAED;
+}
+.scan-res-chg { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; font-weight: 700; }
+.scan-res-chips { display: flex; gap: 6px; margin: 7px 0 8px; flex-wrap: nowrap; overflow: hidden; }
+.scan-res-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem; font-weight: 600; color: #8D949E;
+    border: 1px solid var(--hairline-2); border-radius: 6px;
+    padding: 3px 7px; white-space: nowrap; flex: 0 0 auto;
+}
+.scan-res-chip--sector { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; max-width: 140px; }
+.scan-res-proxlbl {
+    font-size: 0.62rem; color: #5E6570; letter-spacing: 0.04em;
+    margin: 2px 0 3px; white-space: nowrap;
+}
+.scan-mom-bar {
+    height: 34px; display: flex; align-items: center;
+    background: rgba(255,255,255,0.03); border-radius: 6px; padding: 0 6px;
+}
+.scan-mom-bar span { display: block; height: 8px; border-radius: 4px; }
+/* CTA de la tarjeta */
+div[class*="st-key-scres_"] button {
+    margin-top: 8px;
+    height: 34px !important; min-height: 34px !important;
+    white-space: nowrap !important;
+    background: rgba(var(--accent-rgb), 0.08) !important;
+    border: 1px solid rgba(var(--accent-rgb), 0.40) !important;
+    border-radius: 10px !important;
+    transition: border-color .15s ease, transform 160ms ease-out;
+}
+div[class*="st-key-scres_"] button:hover { border-color: rgba(var(--accent-rgb), 0.85) !important; }
+div[class*="st-key-scres_"] button:active { transform: scale(0.97); }
+div[class*="st-key-scres_"] button p {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.7rem !important; font-weight: 700 !important;
+    letter-spacing: 0.08em !important; color: var(--accent) !important;
+    white-space: nowrap !important; margin: 0 !important;
+}
+/* Embed estrecho: el grid de tarjetas pasa a 1 columna */
+@media (max-width: 700px) {
+    div[class*="st-key-scres_"] { padding: 10px 12px 8px; }
+}
+
+/* ── Etiqueta de TIPO DE ACTIVO (ACCIÓN / ETF / CRIPTO) ────────────────
+   En el header del análisis: chip discreto junto al ticker. En el sidebar:
+   versión mini, fina y gris, pegada al nombre. Informativa, nunca gritona. */
+.asset-tipo-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: #8D949E;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--hairline-2);
+    border-radius: 5px;
+    padding: 3px 8px 2px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.sb-card-tipo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.48rem;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    color: #5E6570;
+    margin-left: 5px;
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+
+/* ══ BARRA SUPERIOR DEL INICIO: slider de tipo + píldora del escáner ══
+   Dos piezas separadas sobre el hero. El slider (ETF | ACCIONES | CRIPTO)
+   habla el mismo idioma visual que el menú de secciones de los análisis
+   (píldora con puntito y marco dorado en la activa). La píldora del escáner
+   vive aislada a la derecha, con un radar que barre de izquierda a derecha
+   POR DETRÁS del texto — el texto siempre legible. */
+div[class*="st-key-herobar"] {
+    margin: 0 0 10px;
+}
+div[class*="st-key-herobar"] [data-testid="stHorizontalBlock"] {
+    align-items: center !important;
+}
+
+/* ── Slider de tipo (mismo lenguaje que sectbar, sin su separador) ── */
+div[class*="st-key-herotipo"] [data-testid="stRadio"] {
+    width: 100% !important; display: flex !important;
+    justify-content: flex-start !important;
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] {
+    display: inline-flex !important; flex-wrap: nowrap; gap: 3px;
+    background: var(--surface-1);
+    border: 1px solid var(--hairline-2);
+    border-radius: 16px;
+    padding: 6px;
+    position: relative;                /* ancla de la píldora deslizante */
+}
+/* ── La píldora activa es UN solo elemento que SE DESLIZA ──────────────
+   En vez de pintar fondo/borde en el label activo (aparecía y desaparecía
+   en seco), la píldora es un ::before absoluto del radiogroup que viaja con
+   translateX hasta la pestaña elegida. El radiogroup persiste en el DOM
+   entre reruns de Streamlit (se parchea, no se remonta), así que la
+   transición CSS anima de verdad. Cero JavaScript, cero peso. Requiere
+   labels de ANCHO FIJO igual (118px) para que el desplazamiento cuadre. */
+div[class*="st-key-herotipo"] [role="radiogroup"]::before {
+    content: "";
+    position: absolute;
+    top: 6px; bottom: 6px; left: 6px;
+    width: 118px;
+    border-radius: 10px;
+    background: rgba(var(--accent-rgb), 0.10);
+    border: 1px solid rgba(var(--accent-rgb), 0.55);
+    box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.22),
+                inset 0 0 6px rgba(var(--accent-rgb), 0.08);
+    transition: transform 260ms cubic-bezier(0.23, 1, 0.32, 1);
+    pointer-events: none;
+    z-index: 0;
+}
+div[class*="st-key-herotipo"] [role="radiogroup"]:has(label:nth-of-type(1) input:checked)::before {
+    transform: translateX(0);
+}
+div[class*="st-key-herotipo"] [role="radiogroup"]:has(label:nth-of-type(2) input:checked)::before {
+    transform: translateX(121px);      /* 118px de label + 3px de gap */
+}
+div[class*="st-key-herotipo"] [role="radiogroup"]:has(label:nth-of-type(3) input:checked)::before {
+    transform: translateX(242px);
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label {
+    margin: 0 !important; padding: 9px 0 !important;
+    width: 118px; justify-content: center !important;
+    border-radius: 10px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    cursor: pointer; transition: background .15s ease;
+    position: relative; z-index: 1;    /* texto por encima de la píldora */
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label:hover {
+    background: rgba(255,255,255,0.04) !important;
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label > div:first-child {
+    display: none !important;          /* oculta el circulito nativo del radio */
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label p {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.74rem !important; font-weight: 600 !important;
+    letter-spacing: 0.10em !important; color: #8D949E !important;
+    margin: 0 !important; white-space: nowrap;
+    transition: color .18s ease;
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label p::before {
+    content: "◈ "; opacity: .55;
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label:has(input:checked) p {
+    color: var(--accent) !important;
+}
+div[class*="st-key-herotipo"] [role="radiogroup"] label:has(input:checked) p::before {
+    opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+    div[class*="st-key-herotipo"] [role="radiogroup"]::before { transition: none; }
+}
+/* Pantallas estrechas: los 3 labels de 118px no caben → la píldora viajera
+   se apaga y vuelve el estilo por-label (cambio instantáneo, sin romper nada). */
+@media (max-width: 700px) {
+    div[class*="st-key-herotipo"] [role="radiogroup"]::before { display: none; }
+    div[class*="st-key-herotipo"] [role="radiogroup"] label { width: auto; padding: 8px 12px !important; }
+    div[class*="st-key-herotipo"] [role="radiogroup"] label:has(input:checked) {
+        background: rgba(var(--accent-rgb), 0.10) !important;
+        border-color: rgba(var(--accent-rgb), 0.55) !important;
+    }
+}
+
+/* ── Píldora del escáner: aislada, con radar de izquierda a derecha ── */
+div[class*="st-key-scanpill"] .stButton > button {
+    position: relative; overflow: hidden;
+    background: var(--surface-1) !important;
+    border: 1px solid rgba(var(--accent-rgb), 0.45) !important;
+    border-radius: 14px !important;
+    padding: 13px 14px !important;
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.10);
+    transition: border-color .15s ease, box-shadow .15s ease,
+                transform 160ms ease-out;
+}
+div[class*="st-key-scanpill"] .stButton > button:hover {
+    border-color: rgba(var(--accent-rgb), 0.85) !important;
+    box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.22);
+}
+div[class*="st-key-scanpill"] .stButton > button:active {
+    transform: scale(0.97);
+}
+/* El haz del radar: franja vertical difusa que cruza la píldora de izquierda
+   a derecha en bucle. Va DEBAJO del texto (el texto se eleva con z-index). */
+div[class*="st-key-scanpill"] .stButton > button::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: -30%;
+    width: 24%;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(var(--accent-rgb), 0.10) 30%,
+        rgba(var(--accent-rgb), 0.28) 55%,
+        rgba(var(--accent-rgb), 0.10) 80%,
+        transparent 100%);
+    animation: scanpill-sweep 3.4s linear infinite;
+    pointer-events: none;
+}
+@keyframes scanpill-sweep {
+    0%   { left: -30%; }
+    100% { left: 106%; }
+}
+div[class*="st-key-scanpill"] .stButton > button [data-testid="stMarkdownContainer"] {
+    position: relative; z-index: 1;      /* texto SIEMPRE por encima del haz */
+}
+div[class*="st-key-scanpill"] .stButton > button p {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 0.72rem !important; font-weight: 700 !important;
+    letter-spacing: 0.10em !important;
+    color: var(--accent) !important;
+    margin: 0 !important; white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+    div[class*="st-key-scanpill"] .stButton > button::before { animation: none; }
+}
+/* Anchos de embed (Whop) y móvil: el slider (374px fijos) y la píldora ya no
+   caben en la misma línea — SE SOLAPABAN (el label CRIPTO tapaba media
+   píldora y el clic moría). La barra se apila: slider centrado arriba,
+   píldora a lo ancho debajo. */
+@media (max-width: 1050px) {
+    div[class*="st-key-herobar"] [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    div[class*="st-key-herobar"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+        flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;
+    }
+    div[class*="st-key-herotipo"] [data-testid="stRadio"] { justify-content: center !important; }
+    div[class*="st-key-scanpill"] .stButton { display: flex; justify-content: center; }
+    div[class*="st-key-scanpill"] .stButton > button { min-width: 260px; margin-top: 6px; }
+}
+@media (max-width: 640px) {
+    div[class*="st-key-herotipo"] [role="radiogroup"] label { padding: 8px 12px !important; }
+}
+
 /* ── Fila "Datos de Mercado": 5 tiles (uno más que el resto) ───────────
    En pantallas intermedias (sidebar abierto + ventana ~900px) cinco
    columnas dejaban 74px por tile y el Market Cap se cortaba. Aquí, y SOLO
@@ -4657,6 +5273,17 @@ AGENT_ICONS = {
     "Contexto de Mercado": "CM",
     "Riesgo":            "RS",
     "Orquestador":       "OR",
+    # ETF
+    "Perfil y Costes":     "PC",
+    "Composición":         "CP",
+    "Rendimiento":         "RD",
+    "Rendimiento y Riesgo": "RD",
+    "Perfil del ETF":      "PC",
+    # Cripto
+    "Perfil y Tokenomics": "TK",
+    "Tokenomics":          "TK",
+    "Adopción y Red":      "AD",
+    "Sentimiento cripto":  "SN",
 }
 
 # Slug de cada agente → clase CSS del ícono SVG (.agent-icon--<slug>). Sustituye

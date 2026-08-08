@@ -56,7 +56,7 @@ SECTOR_OPTIONS = [
     {"key": "Industrials",             "label": "Industriales",          "icon": "🏭"},
     {"key": "Energy",                  "label": "Energía",               "icon": "⚡"},
     {"key": "Real Estate",             "label": "Inmobiliario",          "icon": "🏘️"},
-    {"key": "Utilities",               "label": "Utilities",             "icon": "🔌"},
+    {"key": "Utilities",               "label": "Servicios Públicos",    "icon": "🔌"},
     {"key": "Basic Materials",         "label": "Materiales básicos",    "icon": "🪨"},
 ]
 

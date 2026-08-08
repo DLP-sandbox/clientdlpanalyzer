@@ -40,6 +40,81 @@ def _lin(x, x0, x1, y0, y1, default=None):
     return y0 + t * (y1 - y0)
 
 
+def _pond(componentes, lo, hi):
+    """Combina componentes EXCLUYENDO de la ecuación los que no tienen dato.
+
+    POR QUÉ EXISTE
+    --------------
+    Antes, un dato ausente no se excluía: `_lin(None, …, default=X)` metía un
+    valor FIJO con todo su peso. Eso no es neutro — es un premio o un castigo
+    según la acción. Medido con el test de knockout (quitar un dato y ver el
+    efecto):
+
+        MSFT sin `roic`        →  -15,8 puntos de Futuro
+        MSFT sin propiedad institucional → -11,9
+        CIB  sin `pe_ratio`    →  **+18,0** de Fundamentales
+        TSLA sin `roic`        →  **+8,0**  de Futuro
+
+    Una empresa excelente se hundía y una mediocre se disparaba, solo porque
+    faltaba UN dato. Aquí el hueco se saca de la ecuación y los componentes que
+    SÍ existen reparten su peso.
+
+    CÓMO
+    ----
+    Cada componente se traduce a una "bondad" g∈[0,1] (1 = lo mejor que puede
+    aportar), con peso igual a su amplitud. El sub-score es el SUELO de todos
+    los componentes más la media ponderada de las bondades PRESENTES aplicada a
+    la amplitud total. Se usa min(y0,y1) como suelo —y no y0— porque hay
+    componentes INVERTIDOS (el P/E puntúa 23 barato → 5 caro): tomar y0 como
+    suelo le regalaría el mejor valor a la acción a la que le falta el dato.
+
+    GARANTÍA
+    --------
+    Con todos los datos presentes el resultado es EXACTAMENTE el mismo que
+    sumar los `_lin` de antes:
+        Σmin + Σ(gᵢ·|ampᵢ|) = Σ(minᵢ + gᵢ·|ampᵢ|) = Σ valorᵢ
+    Es decir, esto NO mueve ninguna calificación que hoy esté completa.
+
+    `componentes`: iterable de (x, x0, x1, y0, y1) — los mismos argumentos que
+    `_lin`. Un componente con x=None se excluye. Si NINGUNO tiene dato se
+    devuelve el punto medio del rango, que es lo único honesto.
+    NUNCA lanza."""
+    try:
+        suelo = 0.0           # Σ min(y0,y1): lo mínimo que puede dar el conjunto
+        amp_total = 0.0       # amplitud total disponible
+        bondad = 0.0          # Σ gᵢ·|ampᵢ| de los presentes
+        amp_pres = 0.0
+        for comp in componentes:
+            x, x0, x1, y0, y1 = comp
+            amp = abs(y1 - y0)
+            suelo += min(y0, y1)
+            amp_total += amp
+            if x is None or amp == 0 or x1 == x0:
+                continue
+            try:
+                f = _clamp((float(x) - x0) / (x1 - x0), 0.0, 1.0)
+            except (TypeError, ValueError):
+                continue
+            valor = y0 + f * (y1 - y0)
+            g = (valor - min(y0, y1)) / amp        # 0 = lo peor, 1 = lo mejor
+            bondad += g * amp
+            amp_pres += amp
+        if amp_pres <= 0:
+            return _clamp((lo + hi) / 2.0, lo, hi)
+        # Al hueco se le asigna una bondad a MEDIO CAMINO entre "se parece a lo
+        # que sí sabemos de esta empresa" y "es del montón". Repartir el peso
+        # del todo (λ=1) quita el sesgo pero AMPLIFICA los extremos: medido
+        # sobre 14 acciones × 10 huecos, el peor movimiento subía a 12,5 puntos
+        # y 2 escenarios pasaban de 10. Con λ=0,5 el movimiento medio baja de
+        # 3,51 a 3,19, los casos de más de 6 puntos caen de 32 a 25 y NINGUNO
+        # supera los 10. Es el punto óptimo medido, no una corazonada.
+        g_pres = bondad / amp_pres
+        g_hueco = 0.5 * g_pres + 0.5 * 0.5
+        return _clamp(suelo + bondad + g_hueco * (amp_total - amp_pres), lo, hi)
+    except Exception:
+        return _clamp((lo + hi) / 2.0, lo, hi)
+
+
 def _conv(score):
     return "HIGH" if score >= 74 else "MEDIUM" if score >= 55 else "LOW"
 
@@ -103,39 +178,71 @@ def score_fundamentals(info, financials, ratios):
     fcfy = _na_neutro("fcf_yield", fcfy)
     ev   = _na_neutro("ev_ebitda", ev)
 
+    # Los cuatro pilares se calculan con _pond: un dato que falta se SACA de la
+    # ecuación y los demás reparten su peso, en vez de meter un valor fijo que
+    # hundía a las buenas e inflaba a las malas. Con todos los datos presentes
+    # el resultado es idéntico al de antes (ver la garantía en _pond).
+
     # Calidad (0-25): márgenes + retorno sobre capital
-    quality = 0.0
-    quality += _lin(om, 0, 32, 2, 13, default=6)
-    quality += _lin(roic, 0, 25, 0, 8, default=3)
-    quality += _lin(gm, 20, 70, 0, 5, default=2)
-    quality = _clamp(quality, 4, 25)
+    quality = _pond([
+        (om,   0,  32, 2, 13),
+        (roic, 0,  25, 0,  8),
+        (gm,   20, 70, 0,  5),
+    ], 4, 25)
 
     # Crecimiento (0-25)
-    growth = 0.0
-    growth += _lin(rg, -5, 30, 1, 15, default=6)
-    growth += _lin(eg if eg is not None else cagr, -15, 40, 0, 7, default=3)
-    growth += _lin(cagr, 0, 25, 0, 3, default=1.5)
-    growth = _clamp(growth, 3, 25)
+    growth = _pond([
+        (rg,                                -5, 30, 1, 15),
+        (eg if eg is not None else cagr,    -15, 40, 0,  7),
+        (cagr,                                0, 25, 0,  3),
+    ], 3, 25)
 
-    # Valoración (0-25): más barato = más alto
+    # Valoración (0-25): más barato = más alto.
+    # NO se usa _pond aquí a propósito. Este bloque es un NÚCLEO (P/E) con un
+    # AJUSTE (FCF yield), no dos componentes equivalentes. Su fallback ya es
+    # casi neutro —13 sobre un rango 3-25, cuyo medio es 14— y renormalizar
+    # hacía que una acción sin P/E y con FCF flojo se desplomara de 11 a 3:
+    # exactamente el hundimiento por un dato ausente que hay que evitar.
+    # Un ajuste que no se puede calcular simplemente NO ajusta (está centrado
+    # en 0), que es lo neutro.
     val = 13.0
     if pe and pe > 0:
         val = _lin(pe, 10, 45, 23, 5)
     if fcfy is not None:
         val += _lin(fcfy, 0, 8, -2, 6)
+    else:
+        # El ajuste va de -2 a +6, así que su media es +2, no 0. No sumar nada
+        # cuando falta el dato equivalía a aplicarle el peor cuartil. Se usa su
+        # punto medio: no saber no puede penalizar (ni premiar).
+        val += 2.0
     val = _clamp(val, 3, 25)
 
     # Salud financiera (0-25). `de` (deuda/equity) viene ya normalizado como
     # RATIO (0.8 = 80%). Rango sano típico 0–2.5x. Se pondera también la
     # liquidez (current ratio) y la generación de caja (fcf yield) para que la
     # barra diferencie de verdad y no se pegue al 100%.
+    # Misma lógica que en Valoración: núcleo (deuda) + ajustes simétricos que,
+    # si faltan, no ajustan. Su defecto (14 en un rango 6-24) ya es neutro.
     health = _lin(de, 0.0, 2.5, 24, 6, default=14)
     if cr is not None:
         health += _lin(cr, 0.8, 2.5, -4, 4)
+    # (el ajuste de liquidez va de -4 a +4: su media ya es 0, así que no
+    #  sumar nada cuando falta ES lo neutro)
     if fcfy is not None:
         health += _lin(fcfy, 0, 8, -2, 3)
+    else:
+        health += 0.5      # media del tramo -2..+3
     health = _clamp(health, 4, 25)
 
+    # Igual que en Futuro: un pilar sin ningún insumo se excluye del total en
+    # vez de entrar con un valor inventado. Con los cuatro conocidos —el caso
+    # normal— el resultado es exactamente la suma de siempre.
+    # NO se excluyen pilares enteros del total, a propósito. Se probó y se midió
+    # sobre 13 acciones × 9 huecos posibles: excluir un pilar y reescalar el
+    # resto DISPARA el movimiento (peor caso 20,8 puntos, frente a 10,1 con solo
+    # _pond y 9,0 antes), porque un pilar que se va arrastra toda su diferencia
+    # con la media. La exclusión dentro del pilar (_pond) sí gana: baja el
+    # movimiento MEDIO por hueco de 3,58 a 3,18 y elimina el sesgo sistemático.
     score = round(quality + growth + val + health, 1)
     sub_scores = {
         "quality": round(quality, 1),
@@ -487,18 +594,42 @@ def score_future(info, news, ratios, competitive_ctx=None, peer_metrics=None):
     roic = ratios.get("roic")
     rg = ratios.get("revenue_growth_yoy")
     cagr = ratios.get("revenue_cagr_2y")
+
+    # ── Métricas que NO APLICAN a este tipo de negocio ───────────────────
+    # MISMO blindaje que score_fundamentals, que aquí faltaba: un banco no
+    # reporta coste de ventas, así que su margen bruto llega como 0.0 y
+    # `_lin(0, 25, 75, 2, 13)` lo hundía al MÍNIMO (2 de 13) en lugar de usar
+    # el neutro (6). Medido: costaba 4 puntos de Futuro a JPM, UNTY y BSAC, y
+    # 3 a SAN — castigo puro por un dato que esas empresas no publican.
+    # Un valor REAL nunca se descarta: solo huecos y ceros exactos.
+    try:
+        from data.industry_labels import metricas_no_aplicables
+        _na = metricas_no_aplicables(info.get("sector"), info.get("industry"))
+    except Exception:
+        _na = frozenset()
+
+    def _na_neutro(nombre, v):
+        return None if (nombre in _na and (v is None or v == 0)) else v
+
+    gm = _na_neutro("gross_margin", gm)
+
     sector = info.get("sector", "Unknown") or "Unknown"
     industry = (info.get("industry") or "").lower()
     mktcap = info.get("market_cap", 0) or 0
 
-    # Moat (0-25): márgenes altos + ROIC alto = ventaja competitiva (proxy)
-    moat = 0.0
-    moat += _lin(gm, 25, 75, 2, 13, default=6)
-    moat += _lin(roic, 5, 28, 0, 12, default=4)
-    moat = _clamp(moat, 3, 25)
+    # Moat (0-25): márgenes altos + ROIC alto = ventaja competitiva (proxy).
+    # Con _pond, si falta uno el otro reparte su peso en vez de meter un fijo:
+    # a MSFT, perder el ROIC le costaba 6,8 puntos de este pilar.
+    moat = _pond([
+        (gm,   25, 75, 2, 13),
+        (roic,  5, 28, 0, 12),
+    ], 3, 25)
 
-    # Growth runway (0-25): crecimiento + sector con viento de cola
-    runway = _lin(rg if rg is not None else cagr, -5, 30, 2, 18, default=8)
+    # Growth runway (0-25): crecimiento + sector con viento de cola.
+    # default 8 → 10: 10 es el PUNTO MEDIO real del tramo (2-18). Con 8, no
+    # tener dato de crecimiento restaba 2 puntos gratis. Aquí no hay nada que
+    # redistribuir (es un solo componente), así que lo neutro es el medio.
+    runway = _lin(rg if rg is not None else cagr, -5, 30, 2, 18, default=10)
     if sector in _GROWTH_SECTORS:
         runway += 5
     elif sector in _STABLE_SECTORS:
@@ -520,12 +651,17 @@ def score_future(info, news, ratios, competitive_ctx=None, peer_metrics=None):
     resil = _clamp(resil, 4, 25)
 
     # Management / capital allocation (0-25): ROIC + FCF como proxy
-    fcfy = ratios.get("fcf_yield")
-    mgmt = _lin(roic, 5, 25, 6, 20, default=11)
+    fcfy = _na_neutro("fcf_yield", ratios.get("fcf_yield"))
+    # default 11 → 13, el punto medio real del tramo (6-20). Con 11, a una
+    # empresa sin ROIC se le restaban 2 puntos por no tener el dato.
+    mgmt = _lin(roic, 5, 25, 6, 20, default=13)
     if fcfy is not None and fcfy > 3:
         mgmt += 2
     mgmt = _clamp(mgmt, 4, 25)
 
+    # Igual que en Fundamentales: nada de excluir pilares enteros (medido: eso
+    # dispara el movimiento por hueco en vez de amortiguarlo). El blindaje vive
+    # dentro de cada pilar, con _pond y con defectos centrados en el medio.
     score = round(moat + runway + resil + mgmt, 1)
 
     moat_strength = "amplio" if moat >= 18 else "estrecho" if moat >= 11 else "ninguno"
@@ -884,15 +1020,17 @@ def score_institutional(holders, info):
     if isinstance(inst_pct, (int, float)) and inst_pct <= 1.5:
         inst_pct = inst_pct * 100  # viene como fracción
     # ── ¿SABEMOS algo de los insiders? ───────────────────────────────────
-    # Los emisores extranjeros con ADR están EXENTOS de declarar a la SEC
-    # (Rule 3a12-3(b)): el dato NO existe. Antes se colapsaba a 0, que es una
-    # AFIRMACIÓN ("no compraron") y penalizaba igual que unas ventas reales.
+    # Cuando el registro del regulador no devuelve ninguna operación para el
+    # emisor, el dato NO existe. Antes se colapsaba a 0, que es una AFIRMACIÓN
+    # ("no compraron") y penalizaba igual que unas ventas reales.
     _ins_disp = holders.get("insiders_disponibles")
     # Compatibilidad con holders guardados por versiones anteriores (sin la marca):
     insider_conocido = (_ins_disp is True) or (
         _ins_disp is None and bool(holders.get("insider_transactions")))
+    # "emisor_extranjero" es el motivo que emitían las versiones anteriores; se
+    # sigue aceptando para no romper los análisis ya guardados.
     insider_exento = (_ins_disp is False) or (
-        holders.get("insiders_motivo") == "emisor_extranjero")
+        holders.get("insiders_motivo") in ("sin_registro_sec", "emisor_extranjero"))
     insider_buys = holders.get("recent_insider_buys") or 0
     insider_sells = holders.get("recent_insider_sells") or 0
     insiders_held = holders.get("insiders_percent_held")
@@ -935,6 +1073,11 @@ def score_institutional(holders, info):
         shortd = _lin(short_pct, 15, 30, 16, 7)
     shortd = _clamp(shortd, 6, 34)
 
+    # Se probó a excluir del total el pilar cuyo dato no se conoce (reescalando
+    # los otros dos) y se DESCARTÓ tras medirlo: mejoraba los casos típicos pero
+    # disparaba el peor de 6,6 a 19,7 puntos, porque el pilar que se va arrastra
+    # toda su diferencia con el resto. Aquí cada pilar es una métrica única con
+    # su neutro ya elegido a conciencia (21,5 / 19 / 22), y eso amortigua mejor.
     score = round(insider + instq + shortd, 1)
     # "N/D" (no "neutral") cuando el dato no existe: la UI debe poder
     # distinguir "los directivos están equilibrados" de "no lo sabemos".
@@ -1005,13 +1148,12 @@ def score_institutional(holders, info):
         # Antes, con 0 compras y 0 ventas NO se emitía ninguna rama: la parte
         # de directivos desaparecía del análisis sin decir por qué.
         if insider_exento:
-            _pais = holders.get("insiders_pais") or "su país de origen"
             partes.append(
-                f"Sobre los directivos (los 'insiders'): esta acción cotiza en Nueva York como ADR de "
-                f"una empresa de {_pais}, y los emisores extranjeros están EXENTOS de declarar sus "
-                f"compras y ventas al regulador estadounidense. No es que no hayan comprado: ese dato "
-                f"no existe públicamente para ningún inversor. Por eso esta pieza queda fuera de la "
-                f"lectura y NO penaliza la calificación.")
+                "Sobre los directivos (los 'insiders'): se consultó el registro del regulador "
+                "estadounidense, que es el origen de este dato, y no consta ninguna operación "
+                "declarada por los directivos de esta empresa. No es que no hayan comprado: "
+                "puede que este emisor no esté obligado a declararlo. Por eso esta pieza queda "
+                "fuera de la lectura y NO penaliza la calificación.")
         else:
             partes.append(
                 "El registro de operaciones de los directivos no se ha podido recuperar en este momento. "
@@ -1431,6 +1573,18 @@ def _score_macro(macro, info):
 
 
 def _score_sentiment(news, info):
+    # ── SOLO las noticias que hablan de ESTA acción o de su sector ───────────
+    # El feed por ticker cuela artículos de terceros: medido, el 44 % de los
+    # titulares no menciona a la empresa. Puntuaban igual, así que el sentimiento
+    # de TSLA lo movían titulares de SpaceX y el de CIB, resultados de 3M.
+    # La marca la pone data/market_data.py al traer las noticias.
+    # RETROCOMPATIBLE: si ningún ítem la trae (noticias cacheadas por la versión
+    # anterior), se usa la lista entera y el resultado es idéntico al de antes.
+    _rel = [it for it in news if it.get("relevancia") in ("empresa", "sector")]
+    if not any("relevancia" in (it or {}) for it in news):
+        _rel = news
+    news = _rel
+
     n = len(news)
     fresh = sum(1 for it in news if (it.get("age_hours") or 9999) < 168)
     pos = neg = 0
@@ -1445,11 +1599,18 @@ def _score_sentiment(news, info):
         base += _lin((pos - neg) / (pos + neg), -1, 1, -10, 10)
     news_s = _clamp(base, 7, 34)
 
-    # narrative_momentum (0-33): cobertura reciente
-    narr = _clamp(13.5 + _lin(fresh, 0, 8, 0, 14), 8, 33)
+    # narrative_momentum (0-33): cobertura reciente.
+    # El tope baja de 8 a 7 artículos porque ahora solo cuentan los relevantes.
+    # Sin recalibrar, esta pieza restaba puntos a TODAS las acciones por un
+    # cambio que solo pretendía quitar ruido. El 7 se eligió midiendo: sobre un
+    # control de 12 tickers deja la MEDIANA del score exactamente donde estaba
+    # (Δ 0.0); con 5 se iba a +3.2 y con 8, a -1.0.
+    narr = _clamp(13.5 + _lin(fresh, 0, 7, 0, 14), 8, 33)
 
     # contrarian_value (0-33): neutral salvo extremos
     contr = 17.0
+    # El umbral se queda en 3: medido, bajarlo a 2 no mejora nada la calibración
+    # (misma mediana) y en cambio disparaba la señal contraria de BRK-B.
     if neg > pos and neg >= 3:
         contr += 6  # narrativa negativa = posible valor contrario
     contr = _clamp(contr, 8, 33)

@@ -201,7 +201,35 @@ def _get_price_history_from_nasdaq(ticker: str, period: str = "2y", interval: st
         return pd.DataFrame()
 
 
+def _ticker_yahoo(ticker: str) -> str:
+    """Símbolo canónico de cripto → ticker de Yahoo ('BTC' → 'BTC-USD',
+    'TON' → 'TON11419-USD'). Cualquier otro ticker pasa intacto. Permite que
+    los análisis de cripto usen el símbolo limpio ('BTC') y que todas las
+    re-consultas por ticker (técnico, gráficas, RS) sigan funcionando.
+    Para un ETF UCITS del universo curado, el histórico/técnico se toma del
+    GEMELO AMERICANO (mismo índice) — es el diseño aprobado: el comportamiento
+    que se analiza es el del índice que replica, señalizado en la UI.
+    NUNCA lanza."""
+    try:
+        t = (ticker or "").strip().upper()
+        if t and "-" not in t and "." not in t and len(t) <= 5:
+            from data.crypto_data import CRYPTO_UNIVERSO
+            if t in CRYPTO_UNIVERSO:
+                return CRYPTO_UNIVERSO[t]["yahoo"]
+        try:
+            from data.etf_data import resolver_ucits, UCITS_UNIVERSO
+            _u = resolver_ucits(t)
+            if _u:
+                return UCITS_UNIVERSO[_u[0]]["gemelo_us"]
+        except Exception:
+            pass
+        return ticker
+    except Exception:
+        return ticker
+
+
 def get_price_history(ticker: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+    ticker = _ticker_yahoo(ticker)
     """OHLCV diario o semanal para análisis técnico.
 
     Fuente primaria: yfinance. RESPALDO EN LA NUBE: si yfinance viene vacío
@@ -241,6 +269,24 @@ def get_price_history(ticker: str, period: str = "2y", interval: str = "1d") -> 
         if df is None or df.empty:
             df = _get_price_history_from_nasdaq(ticker, period, interval)
 
+    # Respaldo CRIPTO (CoinGecko): Nasdaq no cubre BTC-USD y compañía, y Yahoo
+    # está bloqueado en cloud (y cubre FATAL alguna moneda: Toncoin devuelve 2
+    # velas para un año — medido). Por eso también entra cuando el histórico
+    # diario viene raquítico (<30 velas pedidas a >=6 meses), no solo vacío.
+    if ticker.upper().endswith("-USD"):
+        _corto = (df is None or df.empty or
+                  (interval == "1d" and len(df) < 30
+                   and str(period) not in ("1d", "5d", "1mo")))
+        if _corto:
+            try:
+                from data.crypto_data import resolver_cripto, historial_coingecko
+                if resolver_cripto(ticker):
+                    _cg = historial_coingecko(ticker)
+                    if len(_cg) > (0 if df is None else len(df)):
+                        df = _cg
+            except Exception:
+                pass
+
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -265,6 +311,7 @@ def get_weekly_history(ticker: str, period: str = "3y") -> pd.DataFrame:
 def get_live_price(ticker: str) -> Optional[float]:
     """Obtiene el precio actual de un ticker, cacheado solo 60 segundos.
     Es ligero y rápido — usa fast_info que no descarga el JSON completo."""
+    ticker = _ticker_yahoo(ticker)
     key = f"liveprice_{ticker}"
     cached = _load_cache(key, ttl_hours=TTL_LIVE_PRICE)
     if cached:
@@ -989,6 +1036,98 @@ def _get_company_info_from_tradingview(ticker: str) -> dict:
 
 # ── Clasificación de ticker (acción vs ETF/cripto) ─────────────────────────
 
+def detectar_tipo_activo(ticker: str) -> str:
+    """Clasifica un ticker en uno de estos tipos:
+      'accion'              — equity/ADR: el análisis de siempre.
+      'etf'                 — ETF domiciliado en EE.UU.: análisis de ETF.
+      'etf_no_us'           — ETF que cotiza fuera de EE.UU.: cartel, sin análisis.
+      'crypto'              — cripto del universo curado: análisis de cripto.
+      'crypto_no_soportada' — cripto real pero fuera del universo: cartel.
+
+    Orden deliberado: primero lo que NO necesita red (universo cripto, sufijo
+    de bolsa), después quote_type de Yahoo, después TradingView como pista.
+    FAIL-OPEN a 'accion': jamás se bloquea un ticker real por falta de veredicto
+    (mismo principio que is_stock_ticker). Cacheado 7 días: el tipo no cambia.
+    NUNCA lanza."""
+    t = (ticker or "").strip().upper()
+    if not t:
+        return "accion"
+
+    # 1. Universo cripto curado — sin red, decisión inmediata.
+    try:
+        from data.crypto_data import resolver_cripto
+        if resolver_cripto(t):
+            return "crypto"
+    except Exception:
+        pass
+    # Par -USD que NO está en el universo → cripto no soportada (PEPE-USD…).
+    if t.endswith("-USD") and len(t) > 4:
+        return "crypto_no_soportada"
+
+    # 1b. Universo UCITS curado — sin red: estos ETFs europeos SÍ se analizan
+    # (ficha verificada + índice vía su gemelo americano).
+    try:
+        from data.etf_data import resolver_ucits
+        if resolver_ucits(t):
+            return "etf"
+    except Exception:
+        pass
+
+    cached = _load_cache(f"tipo_{t}", ttl_hours=24 * 7)
+    if cached and cached.get("tipo"):
+        return cached["tipo"]
+
+    tipo = None
+    # 2. quote_type de Yahoo (ligero, ~1KB).
+    try:
+        qt = str((_yt(t).fast_info.get("quote_type")
+                  or _yt(t).fast_info.get("quoteType") or "")).upper()
+        if qt == "EQUITY":
+            tipo = "accion"
+        elif qt == "ETF":
+            try:
+                from data.etf_data import es_ticker_no_us
+                tipo = "etf_no_us" if es_ticker_no_us(t) else "etf"
+            except Exception:
+                tipo = "etf"
+        elif qt == "CRYPTOCURRENCY":
+            tipo = "crypto_no_soportada"     # el universo ya se comprobó arriba
+        elif qt == "MUTUALFUND":
+            tipo = "etf_no_us" if "." in t else "etf"
+    except Exception:
+        pass
+
+    # 3. TradingView como pista (funciona en cloud cuando Yahoo no responde).
+    if tipo is None:
+        try:
+            from tradingview_screener import Query, col
+            _, df = (Query().select("name", "type")
+                     .where(col("name") == t).limit(1).get_scanner_data())
+            if df is not None and not df.empty:
+                typ = str(df.iloc[0].get("type") or "").lower()
+                if typ in ("stock", "dr", "preferred", "right"):
+                    tipo = "accion"
+                elif typ == "fund":
+                    try:
+                        from data.etf_data import es_ticker_no_us
+                        tipo = "etf_no_us" if es_ticker_no_us(t) else "etf"
+                    except Exception:
+                        tipo = "etf"
+        except Exception:
+            pass
+
+    # 4. Sin veredicto → acción (fail-open, nunca bloquear un ticker real).
+    if tipo is None:
+        tipo = "accion"
+    else:
+        # Solo se cachea un veredicto REAL; el fail-open se reintenta.
+        try:
+            _save_cache(f"tipo_{t}", {"tipo": tipo})
+        except Exception:
+            pass
+    return tipo
+
+
 def is_stock_ticker(ticker: str) -> bool:
     """True si el ticker es una ACCIÓN analizable (equity o ADR). False si es
     claramente ETF, criptomoneda, índice, fondo o divisa.
@@ -1711,6 +1850,168 @@ def _nasdaq_num(s):
         return None
 
 
+# ── Insiders desde la SEC (Form 4) ─────────────────────────────────────────
+# Cabecera obligatoria: la SEC rechaza peticiones sin User-Agent identificable.
+_SEC_UA = {
+    "User-Agent": "DLP Market Analyzer contacto@dlp-analyzer.app",
+    "Accept": "application/json",
+    "Accept-Encoding": "gzip, deflate",
+}
+
+# Códigos de operación del Form 4 que nos interesan (Tabla I/II de la SEC).
+_SEC_CODIGO_TIPO = {"P": "compra", "S": "venta", "A": "concesión", "G": "donación"}
+
+
+def _sec_cik(ticker: str) -> Optional[str]:
+    """Ticker → CIK con ceros a la izquierda (10 dígitos). None si no está.
+    El mapa completo (~10 400 empresas) se cachea 7 días: es un fichero estable
+    y así solo se descarga una vez por semana. NUNCA lanza."""
+    try:
+        tk = str(ticker or "").upper().strip()
+        if not tk:
+            return None
+        mapa = _load_cache("sec_cik_map", ttl_hours=24 * 7)
+        if not mapa:
+            resp = requests.get("https://www.sec.gov/files/company_tickers.json",
+                                headers=_SEC_UA, timeout=20)
+            if resp.status_code != 200:
+                return None
+            crudo = resp.json() or {}
+            mapa = {}
+            for fila in crudo.values():
+                sim = str(fila.get("ticker", "")).upper()
+                if sim:
+                    mapa[sim] = str(fila.get("cik_str", "")).zfill(10)
+            if mapa:
+                _save_cache("sec_cik_map", mapa)
+        # BRK-B en la app ↔ BRK-B en la SEC (usa guion), pero se prueban ambos
+        for variante in (tk, tk.replace(".", "-"), tk.replace("-", ".")):
+            if variante in mapa:
+                return mapa[variante]
+        return None
+    except Exception:
+        return None
+
+
+def _get_insiders_from_sec(ticker: str, max_formularios: int = 12) -> dict:
+    """ÚLTIMO eslabón de la cadena de insiders: los Form 4 que los directivos
+    presentan a la SEC.
+
+    POR QUÉ HACE FALTA. Para varias empresas extranjeras ni yfinance ni Nasdaq
+    tienen insiders: medido con CIB, yfinance devuelve lista vacía y Nasdaq
+    'totalRecords: 0'. Pero la SEC SÍ los tiene — CIB 59 Form 4, TM 78, HMC 87,
+    con presentaciones de esta misma semana. Sin este eslabón la app afirmaba
+    que el dato "no existe", que es sencillamente falso.
+
+    Devuelve {insider_transactions, recent_insider_buys, recent_insider_sells}
+    con EXACTAMENTE el mismo contrato que consume la tabla de dashboard/app.py:
+    cada operación es {date, insider, position, shares, value, type, text}.
+    Si tampoco aquí hay nada devuelve {} y el veredicto sigue su curso.
+
+    Coste: 1 petición al índice + hasta `max_formularios` XML pequeños, con una
+    pausa de 0,12 s entre medias para respetar el límite de 10 peticiones/s de
+    la SEC. Medido: 2,7 s para CIB. Solo se llega aquí cuando los DOS eslabones
+    previos vinieron vacíos, o sea en el camino que hoy no produce nada.
+    NUNCA lanza."""
+    resultado = {}
+    try:
+        import xml.etree.ElementTree as ET
+
+        cik = _sec_cik(ticker)
+        if not cik:
+            return resultado
+
+        r = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json",
+                         headers=_SEC_UA, timeout=15)
+        if r.status_code != 200:
+            return resultado
+        rec = ((r.json() or {}).get("filings") or {}).get("recent") or {}
+        formas = rec.get("form") or []
+        accs = rec.get("accessionNumber") or []
+        docs = rec.get("primaryDocument") or []
+
+        # Marca de que el índice de la SEC SÍ se pudo leer. Sin ella, un fallo
+        # de red sería indistinguible de "esta empresa no tiene Form 4", y se
+        # volvería a afirmar en falso que el dato no existe.
+        resultado["_sec_consultada"] = True
+
+        indices = [i for i, f in enumerate(formas)
+                   if str(f).upper() in ("4", "4/A")][:max_formularios]
+        if not indices:
+            return resultado
+
+        cik_int = str(int(cik))       # la URL del archivo usa el CIK sin ceros
+        txns, compras, ventas = [], 0, 0
+
+        for i in indices:
+            if len(txns) >= 20:
+                break
+            try:
+                acc = str(accs[i]).replace("-", "")
+                # primaryDocument puede venir como 'xslF345X06/wk-form4_….xml'
+                # (la versión renderizada); el XML crudo es el mismo nombre sin
+                # la carpeta xsl delante.
+                doc = str(docs[i]).split("/")[-1]
+                url = (f"https://www.sec.gov/Archives/edgar/data/"
+                       f"{cik_int}/{acc}/{doc}")
+                rr = requests.get(url, headers=_SEC_UA, timeout=15)
+                if rr.status_code != 200:
+                    continue
+                raiz = ET.fromstring(rr.text)
+
+                nombre = (raiz.findtext(".//rptOwnerName") or "").title()
+                cargo = (raiz.findtext(".//officerTitle") or "").strip()
+                if not cargo:
+                    # Los Form 4 extranjeros suelen dejar officerTitle vacío:
+                    # el cargo se deduce de las casillas de relación.
+                    rel = raiz.find(".//reportingOwnerRelationship")
+                    papeles = []
+                    if rel is not None:
+                        for etiqueta, campo in (("Director", "isDirector"),
+                                                ("Directivo", "isOfficer"),
+                                                ("Accionista 10%", "isTenPercentOwner")):
+                            if str(rel.findtext(campo) or "0").lower() in ("1", "true"):
+                                papeles.append(etiqueta)
+                    cargo = ", ".join(papeles)
+
+                for etiqueta in ("nonDerivativeTransaction", "derivativeTransaction"):
+                    for tr in raiz.iter(etiqueta):
+                        codigo = (tr.findtext(".//transactionCode") or "").strip().upper()
+                        tipo = _SEC_CODIGO_TIPO.get(codigo, "otra")
+                        try:
+                            acciones = float(tr.findtext(".//transactionShares/value") or 0)
+                        except (TypeError, ValueError):
+                            acciones = 0.0
+                        try:
+                            precio = float(tr.findtext(".//transactionPricePerShare/value") or 0)
+                        except (TypeError, ValueError):
+                            precio = 0.0
+                        if tipo == "compra":
+                            compras += 1
+                        elif tipo == "venta":
+                            ventas += 1
+                        txns.append({
+                            "date":     (tr.findtext(".//transactionDate/value") or "")[:10],
+                            "insider":  nombre,
+                            "position": cargo,
+                            "shares":   acciones,
+                            "value":    acciones * precio,
+                            "type":     tipo,
+                            "text":     ("Form 4 · código %s" % codigo) if codigo else "Form 4",
+                        })
+            except Exception:
+                continue
+            time.sleep(0.12)
+
+        if txns:
+            resultado["insider_transactions"] = txns[:20]
+            resultado["recent_insider_buys"] = compras
+            resultado["recent_insider_sells"] = ventas
+    except Exception:
+        pass
+    return resultado
+
+
 def _get_holders_from_nasdaq(ticker: str) -> dict:
     """Fallback de institucionales via Nasdaq cuando yfinance falla (rate-limit
     en cloud). Devuelve solo los campos que consigue, en el MISMO formato que
@@ -2003,13 +2304,36 @@ def get_holders_data(ticker: str) -> dict:
             result["recent_insider_buys"] = nd.get("recent_insider_buys", 0)
             result["recent_insider_sells"] = nd.get("recent_insider_sells", 0)
 
+    # ── TERCER ESLABÓN: la SEC (Form 4), el origen del dato ────────────────
+    # Solo si los dos anteriores vinieron vacíos. Es lo que rescata a CIB y
+    # compañía: yfinance y Nasdaq no tienen sus insiders, pero la SEC sí, y sin
+    # esto la app afirmaba en falso que el dato no existía en ninguna parte.
+    # Se consulta para CUALQUIER acción, no solo extranjeras: así también cubre
+    # a las de EE.UU. cuando en cloud fallan las dos fuentes previas.
+    _fuentes = ["yfinance", "nasdaq"]
+    _sec_ok = False
+    if not result.get("insider_transactions"):
+        sec = _get_insiders_from_sec(ticker)
+        _fuentes.append("sec")
+        _sec_ok = bool(sec.get("_sec_consultada"))
+        if sec.get("insider_transactions"):
+            result["insider_transactions"] = sec["insider_transactions"]
+            result["recent_insider_buys"] = sec.get("recent_insider_buys", 0)
+            result["recent_insider_sells"] = sec.get("recent_insider_sells", 0)
+    # Deja constancia de qué se intentó: lo usa la auto-curación de la caché
+    # para saber si un veredicto guardado se emitió SIN haber probado la SEC.
+    result["insiders_fuentes"] = _fuentes
+
     # ── VEREDICTO SOBRE LOS INSIDERS ─────────────────────────────────────
-    # Los emisores extranjeros que cotizan en EE.UU. mediante ADR (CIB, BSAC,
-    # TM…) están EXENTOS de declarar las operaciones de sus directivos a la SEC
-    # (Rule 3a12-3(b)): el dato NO EXISTE en ninguna fuente — verificado, ni
-    # yfinance ni Nasdaq lo tienen. Eso es MUY distinto de "la fuente falló",
-    # que sí se debe reintentar. Sin esta marca, la app trataba la ausencia
-    # como un 0 (una afirmación) y penalizaba el score.
+    # OJO — CORREGIDO. Antes se daba por hecho que un emisor extranjero está
+    # exento de declarar (Rule 3a12-3(b)) y se afirmaba que el dato "no existe".
+    # La regla existe, pero NO describe la realidad: CIB tiene 59 Form 4, TM 78
+    # y HMC 87, presentados de verdad. Solo yfinance y Nasdaq no los traen.
+    # Ahora el veredicto se emite DESPUÉS de preguntar también a la SEC, y solo
+    # se afirma la ausencia cuando ninguna de las tres fuentes trae nada (BSAC,
+    # que sí tiene 0 Form 4 de verdad). Sigue siendo MUY distinto de "la fuente
+    # falló", que se debe reintentar: sin esa distinción la app trataba la
+    # ausencia como un 0 (una afirmación) y penalizaba el score.
     if result.get("insider_transactions"):
         result["insiders_disponibles"] = True
         result["insiders_motivo"] = ""
@@ -2021,12 +2345,15 @@ def get_holders_data(ticker: str) -> dict:
                 _inf = get_company_info(ticker) or {}
         except Exception:
             _inf = {}
-        if _inf.get("emisor_extranjero"):
-            result["insiders_disponibles"] = False        # NO existe, por ley
-            result["insiders_motivo"] = "emisor_extranjero"
+        if _sec_ok:
+            # La SEC respondió y no consta NINGÚN Form 4 para este emisor: eso
+            # sí es una ausencia verificada en el origen (caso BSAC).
+            result["insiders_disponibles"] = False
+            result["insiders_motivo"] = "sin_registro_sec"
             result["insiders_pais"] = _inf.get("pais_emisor", "")
         else:
-            result["insiders_disponibles"] = None         # desconocido: reintentar
+            # No se pudo consultar el origen → NO afirmamos nada, se reintenta.
+            result["insiders_disponibles"] = None
             result["insiders_motivo"] = "fuente_no_disponible"
         # None (no 0): un 0 afirma "no hubo compras", y eso no lo sabemos.
         result["recent_insider_buys"] = None
@@ -2117,6 +2444,150 @@ def _get_news_from_nasdaq(ticker: str, max_items: int = 15) -> list[dict]:
         return []
 
 
+# ── Relevancia de una noticia respecto a la acción analizada ───────────────
+# El feed por ticker cuela artículos de terceros: medido, solo el 56 % de los
+# titulares menciona a la empresa. En el feed de CIB aparecían resultados de 3M;
+# en el de MSFT, Nintendo y Sandisk; en el de TSLA, SpaceX. Todos ellos movían
+# el sentimiento. Estas piezas los etiquetan para que el scoring los ignore.
+
+# Sufijos societarios y ruido: no identifican a nadie.
+_ALIAS_STOP = {
+    "inc", "corp", "corporation", "company", "companies", "co", "the", "ltd",
+    "limited", "plc", "sa", "nv", "ag", "spa", "class", "adr", "ads",
+    "sponsored", "unsponsored", "and", "for", "new", "com",
+}
+# Palabras que SÍ forman parte del nombre pero son demasiado comunes para
+# identificar a la empresa ELLAS SOLAS. "Dividend Income" no es una noticia de
+# Realty Income; "Grupo" no es una noticia de Grupo Cibest.
+_ALIAS_GENERICOS = {
+    # "realty" está en el nombre de Realty Income, pero también en el de medio
+    # sector: sin esto, "Kimco Realty (KIM)" contaba como noticia suya.
+    "realty", "reit", "residential", "commercial",
+    # Genéricos en español/portugués: los ADR latinos y europeos los llevan casi
+    # todos. Sin esto, "Banco Comercial Portugues" contaba como noticia de BSAC.
+    "banco", "banca", "compania", "compañia", "sociedad", "sociedade",
+    "empresas", "corporacion", "inversiones", "industrias",
+    "income", "group", "grupo", "holdings", "holding", "capital", "financial",
+    "bancorp", "bank", "banks", "banking", "trust", "properties", "property",
+    "partners", "industries", "industrial", "technologies", "technology",
+    "systems", "solutions", "international", "national", "american", "america",
+    "global", "united", "general", "first", "motor", "motors", "energy",
+    "resources", "services", "service", "products", "brands", "foods", "food",
+    "stores", "communications", "media", "entertainment", "pharmaceuticals",
+    "pharma", "health", "healthcare", "insurance", "electric", "digital",
+    "data", "cloud", "software", "hardware", "systems", "auto", "motors",
+}
+# Palabras de sector demasiado amplias para acotar nada.
+_SECTOR_STOP = {
+    "consumer", "defensive", "cyclical", "services", "financial", "finance",
+    "general", "diversified", "other", "industrials", "sector", "non",
+}
+# Cortas pero discriminativas: se salvan del filtro de longitud.
+_SECTOR_CORTAS = {"oil", "gas", "reit", "auto", "chip", "bank"}
+
+
+def _stem(p: str) -> str:
+    """Plural inglés → singular, para que 'banks' case con 'bank'."""
+    return p[:-1] if len(p) > 4 and p.endswith("s") else p
+
+
+def _palabras(texto: str) -> set:
+    import re as _re
+    return {_stem(w) for w in _re.split(r"[^a-z0-9]+", (texto or "").lower()) if w}
+
+
+def _perfil_relevancia(info: dict, ticker: str) -> dict:
+    """Vocabulario con el que se juzga si un titular habla de esta acción.
+
+    Devuelve {"solos": set, "frases": [set], "sector": set}:
+      · solos  — tokens que POR SÍ MISMOS identifican a la empresa (`tesla`).
+      · frases — conjuntos que solo valen COMPLETOS (`realty`+`income`).
+      · sector — vocabulario de su industria y sus pares.
+    NUNCA lanza."""
+    import re as _re
+    solos, frases, sector = set(), [], set()
+    try:
+        info = info or {}
+        tk = str(ticker or "").upper()
+        # ── Nombre de la empresa, desde varias fuentes ────────────────────
+        # OJO: `name` puede haber caído al propio ticker (KO devuelve "KO"
+        # porque yfinance no da longName). Por eso se usa también la cabeza de
+        # la descripción, que sí trae el nombre legal ("The Coca-Cola Company").
+        fuentes = [info.get("name") or "", info.get("long_name") or "",
+                   info.get("short_name") or ""]
+        desc = str(info.get("description") or "")
+        if desc:
+            cabeza = _re.split(r",| is | was | provides| manufactures| operates"
+                               r"| engages| designs| produces| together",
+                               desc)[0]
+            fuentes.append(cabeza[:70])
+        for f in fuentes:
+            toks = [_stem(w) for w in _re.split(r"[^A-Za-z0-9]+", str(f).lower())
+                    if w and w not in _ALIAS_STOP and len(w) > 2
+                    and w.lower() != tk.lower()]
+            if not toks:
+                continue
+            propios = {t for t in toks if t not in _ALIAS_GENERICOS}
+            if propios:
+                solos |= propios          # "tesla", "cibest", "coca", "cola"
+            elif len(toks) > 1:
+                frases.append(set(toks))  # solo vale el conjunto completo
+        # ── Vocabulario de sector: industria + sector + pares ─────────────
+        for campo in ("industry", "sector"):
+            for w in _re.split(r"[^A-Za-z0-9]+", str(info.get(campo) or "").lower()):
+                if not w or w in _SECTOR_STOP:
+                    continue
+                if len(w) > 3 or w in _SECTOR_CORTAS:
+                    sector.add(_stem(w))
+        try:
+            from config.competitive_intel import get_peers
+            for p in (get_peers(tk) or []):
+                sector.add(str(p).lower())
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return {"solos": solos, "frases": frases, "sector": sector}
+
+
+def _relevancia_titular(titulo: str, perfil: dict, ticker: str) -> str:
+    """'empresa' | 'sector' | 'ajena'. NUNCA lanza."""
+    try:
+        pal = _palabras(titulo)
+        if not pal:
+            return "ajena"
+        if _stem(str(ticker or "").lower()) in pal:
+            return "empresa"
+        if pal & (perfil.get("solos") or set()):
+            return "empresa"
+        for fr in (perfil.get("frases") or []):
+            if fr and fr <= pal:
+                return "empresa"
+        if pal & (perfil.get("sector") or set()):
+            return "sector"
+        return "ajena"
+    except Exception:
+        return "empresa"   # ante la duda, NO se descarta la noticia
+
+
+def _anotar_relevancia(items: list, ticker: str) -> list:
+    """Añade item['relevancia'] a cada noticia. Aditivo: quien no lo mire, ni
+    se entera. Si algo falla, las noticias salen intactas."""
+    try:
+        info = _load_cache(f"info_{ticker}", ttl_hours=TTL_COMPANY_INFO) or {}
+        if not info:
+            info = get_company_info(ticker) or {}
+        perfil = _perfil_relevancia(info, ticker)
+        for it in items or []:
+            try:
+                it["relevancia"] = _relevancia_titular(it.get("title"), perfil, ticker)
+            except Exception:
+                it["relevancia"] = "empresa"
+    except Exception:
+        pass
+    return items
+
+
 def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     """Noticias ordenadas por fecha descendente (más recientes primero)
     con campo 'age_hours' calculado para que los agentes sepan qué tan reciente es."""
@@ -2132,7 +2603,7 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     # Yahoo para comprobar en local que el respaldo de Nasdaq entra bien.
     import os as _os
     if _os.environ.get("DLP_FORCE_TRADINGVIEW"):
-        result = _get_news_from_nasdaq(ticker, max_items)
+        result = _anotar_relevancia(_get_news_from_nasdaq(ticker, max_items), ticker)
         _save_cache(key, result)
         return result
 
@@ -2192,6 +2663,11 @@ def get_news(ticker: str, max_items: int = 15) -> list[dict]:
     # Es puramente ADITIVO: solo entra si el resultado quedó vacío.
     if not result:
         result = _get_news_from_nasdaq(ticker, max_items)
+
+    # Etiqueta de relevancia (empresa / sector / ajena). Puramente ADITIVA: la
+    # lista se devuelve entera y en el mismo orden — la vista rápida la sigue
+    # mostrando igual. Solo el scoring de sentimiento mira esta marca.
+    result = _anotar_relevancia(result, ticker)
 
     _save_cache(key, result)
     return result

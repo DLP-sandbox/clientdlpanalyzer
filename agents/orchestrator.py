@@ -136,6 +136,9 @@ class StockAnalysis:
     asymmetry_direction: Optional[str] = None         # "upside"|"downside"|"balanced"
     asymmetry_strength: Optional[str] = None          # "strong"|"moderate"|"weak"
     is_compound_machine: bool = False                 # flag de calidad excepcional LP
+    # Tipo de activo: "accion" | "etf" | "crypto". Default retrocompatible —
+    # todos los análisis guardados antes de esta versión son de acciones.
+    asset_type: str = "accion"
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> dict:
@@ -166,6 +169,7 @@ class StockAnalysis:
             "asymmetry_direction":     self.asymmetry_direction,
             "asymmetry_strength":      self.asymmetry_strength,
             "is_compound_machine":     self.is_compound_machine,
+            "asset_type":         self.asset_type,
             "timestamp":          self.timestamp,
             "reports":            {k: v.to_dict() for k, v in self.reports.items()},
         }
@@ -796,3 +800,207 @@ class Orchestrator:
             "vetos_applied":     [],
             "alpha_opportunity": "Revisa cada sección del análisis para ver el detalle.",
         }
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  ETF y CRIPTO — flujos ADITIVOS. No tocan el análisis de acciones.
+    # ══════════════════════════════════════════════════════════════════════
+
+    def analyze_etf(self, ticker: str, progress_callback=None) -> StockAnalysis:
+        """Análisis completo de un ETF domiciliado en EE.UU. — 100% por código.
+        Secciones: Perfil y Costes · Composición · Rendimiento y Riesgo ·
+        Técnico (reutilizado). GARANTÍA ANTI-CRASH: nunca propaga excepción."""
+        ticker = (ticker or "").upper().strip()
+        try:
+            from data.etf_data import get_etf_data
+            from data.market_data import get_price_history
+            from agents.etf_engine import (score_etf_perfil, score_etf_composicion,
+                                           score_etf_rendimiento)
+
+            def _tick(nombre, estado):
+                if progress_callback:
+                    try:
+                        progress_callback(nombre, estado)
+                    except Exception:
+                        pass
+
+            _tick("Perfil del ETF", "Analizando")
+            etf = get_etf_data(ticker) or {}
+            # UCITS: el ticker canónico del análisis es la clave del fondo
+            # (SXR8.DE y CSPX.L son el mismo fondo → un solo análisis "CSPX").
+            if etf.get("ucits") and etf.get("ticker"):
+                ticker = etf["ticker"]
+            hist = get_price_history(ticker, period="2y")
+            r_perfil = score_etf_perfil(etf)
+            _tick("Perfil del ETF", "Completado")
+
+            _tick("Composición", "Analizando")
+            r_comp = score_etf_composicion(etf)
+            _tick("Composición", "Completado")
+
+            _tick("Rendimiento", "Analizando")
+            r_rend = score_etf_rendimiento(etf, hist)
+            _tick("Rendimiento", "Completado")
+
+            _tick("Técnico", "Analizando")
+            rep_tech = self.agents["technical"].analyze(ticker)
+            _tick("Técnico", "Completado")
+
+            def _rep(nombre, r):
+                return AgentReport(
+                    agent_name=nombre, score=float(r.get("score", 50)),
+                    analysis=r.get("analysis", ""), pros=r.get("pros", []),
+                    cons=r.get("cons", []), key_metrics=r.get("key_metrics", {}),
+                    conviction=r.get("conviction", "MEDIUM"),
+                    sub_scores=r.get("sub_scores", {}),
+                    raw_data={**(r.get("raw_data") or {}),
+                              "key_insight": r.get("key_insight", "")})
+
+            reports = {
+                "etf_perfil":      _rep("Perfil y Costes", r_perfil),
+                "etf_composicion": _rep("Composición", r_comp),
+                "etf_rendimiento": _rep("Rendimiento y Riesgo", r_rend),
+                "technical":       rep_tech,
+            }
+            pesos = {"etf_perfil": 0.20, "etf_composicion": 0.25,
+                     "etf_rendimiento": 0.35, "technical": 0.20}
+            composite = round(sum(reports[k].score * w for k, w in pesos.items()), 1)
+            breakdown = {k: round(reports[k].score, 1) for k in pesos}
+            rec = self._score_to_recommendation(composite)
+
+            nombre = etf.get("nombre") or ticker
+            ter = etf.get("ter_pct")
+            tesis = (
+                f"{nombre} obtiene {composite:.0f}/100. "
+                + (f"Cuesta un {ter:.2f}% anual y " if ter is not None else "")
+                + f"su rendimiento puntúa {r_rend.get('score', 0):.0f}/100 con una composición "
+                  f"que puntúa {r_comp.get('score', 0):.0f}/100. "
+                + "Un ETF se compra por lo que contiene y por lo que cuesta: las secciones de "
+                  "Composición y Perfil cuentan esa mitad; Rendimiento y Técnico, la otra."
+            )
+            fortalezas = (r_perfil.get("pros", []) + r_rend.get("pros", []) +
+                          r_comp.get("pros", []))[:4]
+            riesgos = (r_rend.get("cons", []) + r_comp.get("cons", []) +
+                       r_perfil.get("cons", []))[:4]
+
+            return StockAnalysis(
+                ticker=ticker, company_name=nombre, composite_score=composite,
+                recommendation=rec,
+                conviction_level="HIGH" if composite >= 74 else "MEDIUM" if composite >= 55 else "LOW",
+                investment_thesis=tesis,
+                key_strengths=fortalezas or ["Datos del ETF recuperados correctamente"],
+                key_risks=riesgos or ["Todo fondo indexado cae lo que caiga su índice"],
+                entry_strategy="Los ETFs se prestan a entradas periódicas (DCA) más que a timing.",
+                exit_strategy="Revisar la tesis si el TER sube, el AUM cae con fuerza o cambia el índice.",
+                time_horizon="Largo plazo (3+ años)",
+                snowflake={}, score_breakdown=breakdown, vetos_applied=[],
+                alpha_opportunity="", reports=reports,
+                entry_price=None, stop_loss=None, target_price=None,
+                risk_reward=None, position_size_pct=None,
+                sector=etf.get("categoria") or "ETF",
+                asset_type="etf",
+            )
+        except Exception as e:
+            return self._emergency_analysis(ticker, {}, err=e)
+
+    def analyze_crypto(self, ticker: str, progress_callback=None) -> StockAnalysis:
+        """Análisis completo de una cripto del universo curado — 100% por código.
+        Secciones: Tokenomics · Adopción y Red · Sentimiento · Técnico
+        (reutilizado) · Riesgo cripto. GARANTÍA ANTI-CRASH: nunca propaga."""
+        try:
+            from data.crypto_data import get_crypto_data, resolver_cripto
+            from data.market_data import get_price_history
+            from agents.crypto_engine import (score_crypto_tokenomics,
+                                              score_crypto_adopcion,
+                                              score_crypto_sentimiento,
+                                              score_crypto_riesgo)
+
+            sim = resolver_cripto(ticker) or (ticker or "").upper().strip()
+
+            def _tick(nombre, estado):
+                if progress_callback:
+                    try:
+                        progress_callback(nombre, estado)
+                    except Exception:
+                        pass
+
+            _tick("Tokenomics", "Analizando")
+            d = get_crypto_data(sim) or {}
+            hist = get_price_history(sim, period="1y")
+            r_tok = score_crypto_tokenomics(d)
+            _tick("Tokenomics", "Completado")
+
+            _tick("Adopción y Red", "Analizando")
+            r_adop = score_crypto_adopcion(d)
+            _tick("Adopción y Red", "Completado")
+
+            _tick("Sentimiento", "Analizando")
+            r_sent = score_crypto_sentimiento(d, hist)
+            _tick("Sentimiento", "Completado")
+
+            _tick("Técnico", "Analizando")
+            rep_tech = self.agents["technical"].analyze(sim)
+            _tick("Técnico", "Completado")
+
+            _tick("Riesgo", "Analizando")
+            hist_btc = get_price_history("BTC", period="1y") if sim != "BTC" else None
+            hist_spy = get_price_history("SPY", period="1y")
+            r_riesgo = score_crypto_riesgo(d, hist, hist_btc, hist_spy)
+            _tick("Riesgo", "Completado")
+
+            def _rep(nombre, r):
+                return AgentReport(
+                    agent_name=nombre, score=float(r.get("score", 50)),
+                    analysis=r.get("analysis", ""), pros=r.get("pros", []),
+                    cons=r.get("cons", []), key_metrics=r.get("key_metrics", {}),
+                    conviction=r.get("conviction", "MEDIUM"),
+                    sub_scores=r.get("sub_scores", {}),
+                    raw_data={**(r.get("raw_data") or {}),
+                              "key_insight": r.get("key_insight", "")})
+
+            reports = {
+                "crypto_tokenomics":  _rep("Perfil y Tokenomics", r_tok),
+                "crypto_adopcion":    _rep("Adopción y Red", r_adop),
+                "crypto_sentimiento": _rep("Sentimiento", r_sent),
+                "technical":          rep_tech,
+                "crypto_riesgo":      _rep("Riesgo", r_riesgo),
+            }
+            pesos = {"crypto_tokenomics": 0.20, "crypto_adopcion": 0.20,
+                     "crypto_sentimiento": 0.15, "technical": 0.25,
+                     "crypto_riesgo": 0.20}
+            composite = round(sum(reports[k].score * w for k, w in pesos.items()), 1)
+            breakdown = {k: round(reports[k].score, 1) for k in pesos}
+            rec = self._score_to_recommendation(composite)
+
+            nombre = d.get("nombre") or sim
+            tesis = (
+                f"{nombre} obtiene {composite:.0f}/100. "
+                + (f"Su tokenomics puntúa {r_tok.get('score', 0):.0f}/100 y la adopción de su red "
+                   f"{r_adop.get('score', 0):.0f}/100. " if d else "")
+                + "Una cripto no tiene flujos de caja: su caso de inversión se sostiene en escasez, "
+                  "uso real y momentum — y su riesgo se gestiona con el tamaño de la posición, "
+                  "no con promesas."
+            )
+            fortalezas = (r_tok.get("pros", []) + r_adop.get("pros", []) +
+                          r_sent.get("pros", []))[:4]
+            riesgos = (r_riesgo.get("cons", []) + r_tok.get("cons", []) +
+                       r_sent.get("cons", []))[:4]
+
+            return StockAnalysis(
+                ticker=sim, company_name=nombre, composite_score=composite,
+                recommendation=rec,
+                conviction_level="HIGH" if composite >= 74 else "MEDIUM" if composite >= 55 else "LOW",
+                investment_thesis=tesis,
+                key_strengths=fortalezas or ["Datos de mercado recuperados correctamente"],
+                key_risks=riesgos or ["Clase de activo de máxima volatilidad"],
+                entry_strategy="Posición pequeña y escalonada: la volatilidad hace el timing casi imposible.",
+                exit_strategy="Definir de antemano cuánta caída se tolera; en cripto llegan antes de lo esperado.",
+                time_horizon="Alta convicción o nada: horizonte de ciclo completo (2-4 años)",
+                snowflake={}, score_breakdown=breakdown, vetos_applied=[],
+                alpha_opportunity="", reports=reports,
+                entry_price=None, stop_loss=None, target_price=None,
+                risk_reward=None, position_size_pct=None,
+                sector="Criptomoneda",
+                asset_type="crypto",
+            )
+        except Exception as e:
+            return self._emergency_analysis(ticker, {}, err=e)

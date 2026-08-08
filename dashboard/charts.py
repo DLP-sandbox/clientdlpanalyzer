@@ -305,7 +305,8 @@ def _gauge_gradient_steps(n: int = 60, alpha: float = 0.16, stops=None) -> list:
              "color": _thermo_rgba((i + 0.5) * w, alpha, stops)} for i in range(n)]
 
 
-def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560) -> go.Figure:
+def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560,
+                         es_precio: bool = True, prefijo_y: str = None) -> go.Figure:
     """
     Versión simplificada: una sola línea de precio de cierre con un degradado
     suave debajo (gráfica tipo 'mountain'). Sin medias, sin RSI, sin MACD.
@@ -378,17 +379,31 @@ def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560)
         showlegend=False,
     ))
 
-    # Etiqueta de esquina, igual que en la gráfica de velas
-    fig.add_annotation(
-        text=f"<b>{ticker} — Precio</b>",
-        xref="x domain", yref="y domain",
-        x=0.01, y=0.97, xanchor="left", yanchor="top",
-        showarrow=False,
-        font=dict(size=12, color=TEXT, family="JetBrains Mono, monospace"),
-        bgcolor="rgba(10,11,13,0.7)",
-        bordercolor="rgba(226,178,92,0.20)",
-        borderwidth=1, borderpad=4,
-    )
+    # Etiqueta del título. Para PRECIO: esquina superior izquierda dentro del
+    # plot (como la gráfica de velas). Para series NO-precio (TVL, Miedo y
+    # Codicia, curva de caída): CENTRADA y POR ENCIMA del área de dibujo — la
+    # curva de caída arranca pegada al techo y la etiqueta de esquina se
+    # solapaba con la propia línea.
+    if es_precio:
+        fig.add_annotation(
+            text=f"<b>{ticker} — Precio</b>",
+            xref="x domain", yref="y domain",
+            x=0.01, y=0.97, xanchor="left", yanchor="top",
+            showarrow=False,
+            font=dict(size=12, color=TEXT, family="JetBrains Mono, monospace"),
+            bgcolor="rgba(10,11,13,0.7)",
+            bordercolor="rgba(226,178,92,0.20)",
+            borderwidth=1, borderpad=4,
+        )
+    else:
+        fig.add_annotation(
+            text=f"<b>{ticker}</b>",
+            xref="paper", yref="paper",
+            x=0.5, y=1.0, xanchor="center", yanchor="bottom",
+            yshift=10,
+            showarrow=False,
+            font=dict(size=12, color=TEXT, family="JetBrains Mono, monospace"),
+        )
 
     fig.update_layout(
         paper_bgcolor=BG_MAIN,
@@ -398,15 +413,17 @@ def build_mountain_chart(df_daily: pd.DataFrame, ticker: str, height: int = 560)
         hovermode="x unified",
         dragmode=False,   # sin arrastre/zoom; el hover se conserva
         showlegend=False,
-        margin=dict(l=10, r=10, t=30, b=10),
+        # Más margen superior cuando el título va centrado ENCIMA del plot.
+        margin=dict(l=10, r=10, t=30 if es_precio else 42, b=10),
         hoverlabel=dict(bgcolor="rgba(16,18,22,0.95)", bordercolor=f"rgba({rgb},0.35)",
                         font=dict(color=TEXT, family="JetBrains Mono, monospace", size=11)),
     )
     fig.update_xaxes(gridcolor=GRID, zerolinecolor=GRID,
                      tickfont=dict(color=MUTED, size=9), showspikes=False)
+    _pref = prefijo_y if prefijo_y is not None else ("$" if es_precio else "")
     fig.update_yaxes(gridcolor=GRID, zerolinecolor=GRID,
                      tickfont=dict(color=MUTED, size=9),
-                     tickprefix="$", range=[y_lo, y_hi])
+                     tickprefix=_pref, range=[y_lo, y_hi])
     return fig
 
 
@@ -1355,6 +1372,69 @@ def build_sentiment_gauge(score: float, height: int = 240) -> go.Figure:
         height=height + 95,   # más grande dentro de su tarjeta
         # Márgenes SIMÉTRICOS → gauge (domain x=[0,1]) y número (x=0.5) CENTRADOS
         # en la tarjeta. Antes un margen asimétrico (r=72) lo empujaba a la izq.
+        margin=dict(l=44, r=44, t=54, b=16),
+    )
+    return fig
+
+
+def build_fear_greed_gauge(valor: float, height: int = 240) -> go.Figure:
+    """Gauge del índice Miedo y Codicia del mercado cripto — MISMO lenguaje
+    de instrumento que el gauge de sentimiento de acciones (arco fino, anillo
+    oscuro, número grande /100), con las etiquetas de su semántica propia."""
+    if valor <= 20:
+        color, label = RED, "MIEDO EXTREMO"
+    elif valor <= 40:
+        color, label = ORANGE, "MIEDO"
+    elif valor <= 60:
+        color, label = BLUE, "NEUTRAL"
+    elif valor <= 80:
+        color, label = "#63DFA3", "CODICIA"
+    else:
+        color, label = GREEN, "CODICIA EXTREMA"
+
+    fig = go.Figure(go.Indicator(
+        mode="gauge",
+        value=valor,
+        domain={"x": [0, 1], "y": [0.28, 1.0]},
+        title={"text": (f"<span style='color:{MUTED}'>MIEDO Y CODICIA</span><br>"
+                        f"<span style='font-size:0.72em;color:{color}'><b>{label}</b></span>"),
+               "font": {"size": 12, "color": MUTED, "family": "JetBrains Mono"}},
+        gauge={
+            "axis": {"range": [0, 100], "tickwidth": 1,
+                     "tickcolor": "rgba(255,255,255,0.30)", "ticklen": 6,
+                     "tickfont": {"size": 8, "color": MUTED, "family": "JetBrains Mono"},
+                     "dtick": 25},
+            "bar": {"color": color, "thickness": 0.30},
+            "bgcolor": "#0D1015",
+            "borderwidth": 1,
+            "bordercolor": "rgba(226,178,92,0.22)",
+            # Degradado térmico: miedo (rojo) → neutral (azul) → codicia (verde)
+            "steps": _gauge_gradient_steps(n=60, alpha=0.15, stops=[
+                (0,   (241, 73, 95)),
+                (30,  (226, 178, 92)),
+                (50,  (111, 163, 224)),
+                (70,  (99, 223, 163)),
+                (100, (61, 214, 140)),
+            ]),
+            "threshold": {
+                "line": {"color": WHITE, "width": 2},
+                "thickness": 0.94,
+                "value": valor,
+            },
+        },
+    ))
+    fig.add_annotation(
+        x=0.5, y=0.10,
+        xref="paper", yref="paper",
+        text=f"<b>{valor:.0f}</b><span style='font-size:0.4em;color:{MUTED}'>/100</span>",
+        showarrow=False,
+        font=dict(size=42, color=color, family="JetBrains Mono"),
+        align="center",
+    )
+    fig.update_layout(
+        paper_bgcolor=PANEL_BG,
+        font=dict(color=TEXT),
+        height=height + 95,
         margin=dict(l=44, r=44, t=54, b=16),
     )
     return fig
